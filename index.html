@@ -709,7 +709,7 @@ async function openCesarLessonDB(aulaId){
     const content=(tt||[]).map(t=>`<article class="lesson"><span class="tag">${t.titulo}</span><div class="body" style="white-space:pre-line">${t.conteudo||''}</div></article>`).join('');
     const caso=cc[0]?`<article class="lesson"><span class="tag">ESTUDO DE CASO</span><h2>Aplicação</h2>
       <div class="body" style="white-space:pre-line">${cc[0].enunciado}</div>
-      <h3>Sua resposta</h3><textarea id="cesarCaseText" style="width:100%;min-height:150px;box-sizing:border-box" placeholder="Escreva sua resposta para a situação-problema..."></textarea>
+      <h3>Sua resposta</h3><textarea id="cesarCaseText" style="width:100%;min-height:150px;box-sizing:border-box" placeholder="Escreva sua análise..."></textarea>
       <button class="primary" style="width:100%;margin-top:12px" onclick="document.getElementById('cesarCaseExpected').style.display='block'">Conferir resposta</button>
       <div id="cesarCaseExpected" class="feedback" style="display:none"><h3>Resposta esperada</h3><p style="white-space:pre-line">${cc[0].resposta_esperada||''}</p></div>
       </article>`:'';
@@ -948,16 +948,24 @@ function openProfessor2(pid){
     aa.length?aa.map(a=>`<button class="card" onclick="openLesson2('${a.id}')"><h3>${esc(a.titulo)}</h3><div class="mut">${SB2.topicos.filter(t=>t.aula_id===a.id).length} tópicos</div></button>`).join(''):'<div class="card"><h3>Nenhuma aula publicada ainda.</h3></div>'
   }</div>`;
 }
-function openLesson2(aid){
+function openLesson2(aid,idx=0){
   const a=SB2.aulas.find(x=>x.id===aid), p=SB2.professores.find(x=>x.id===a?.professor_id);
-  const tops=SB2.topicos.filter(t=>t.aula_id===aid), casos=SB2.casos.filter(c=>c.aula_id===aid), qs=SB2.questoes.filter(q=>q.aula_id===aid);
-  const blocks=tops.map((t,i)=>`<section class="lesson" id="t2-${i}"><span class="prof">Prof. ${esc(p?.nome||'')}</span><h2>${esc(t.titulo)}</h2><div class="cesar-direct">${nl(t.conteudo)}</div></section>`).join('');
-  const caseHtml=casos.map(c=>`<section class="lesson"><h2>Situação-problema</h2><div class="case">${nl(c.enunciado)}</div>${c.resposta_esperada?`<details><summary>Ver resposta esperada</summary><div class="feedback">${nl(c.resposta_esperada)}</div></details>`:''}</section>`).join('');
-  const qHtml=qs.map(q=>{
-    const al=SB2.alternativas.filter(x=>x.questao_id===q.id);
-    return `<section class="lesson"><h2>Questão de fixação</h2><p>${nl(q.enunciado)}</p>${al.map(x=>`<div class="apply-opt"><b>${esc(x.letra)})</b> ${esc(x.texto)}</div>`).join('')}${q.resposta_esperada?`<details><summary>Conferir resposta</summary><div class="feedback">${nl(q.resposta_esperada)}${q.explicacao?'<br><br>'+nl(q.explicacao):''}</div></details>`:''}</section>`;
-  }).join('');
-  M.innerHTML=`<div class="journey"><button class="back" onclick="openProfessor2('${a.professor_id}')">← Aulas de ${esc(p?.nome||'')}</button><article class="lesson"><h1>${esc(a.titulo)}</h1>${a.resumo?`<div class="sub">${nl(a.resumo)}</div>`:''}</article>${blocks}${caseHtml}${qHtml}</div>`;
+  const tops=SB2.topicos.filter(t=>t.aula_id===aid), casos=SB2.casos.filter(c=>c.aula_id===aid);
+  const qs=SB2.questoes.filter(q=>q.aula_id===aid && q.tipo==='multipla_escolha');
+  const n=tops.length, i=Math.max(0,Math.min(Number(idx)||0,n));
+  let body='', nav='';
+  if(i<n){
+    nav='<div class="v49-nav">'+tops.map((t,j)=>`<button class="${j===i?'active':''}" onclick="openLesson2('${aid}',${j})">Bloco ${j+1}</button>`).join('')+'</div>';
+    const t=tops[i];
+    body=`<section class="lesson v49-block"><span class="prof">Prof. ${esc(p?.nome||'')}</span><h2>${esc(t.titulo)}</h2><div class="v49-text">${nl(t.conteudo)}</div><div class="v49-next">${i?`<button class="back" onclick="openLesson2('${aid}',${i-1})">← Anterior</button>`:'<span></span>'}<button class="back" onclick="openLesson2('${aid}',${i+1})">${i===n-1?'Atividades':'Próximo'} →</button></div></section>`;
+  } else {
+    body=casos.slice(0,1).map((c,k)=>`<section class="lesson"><h2>Situação-problema</h2><div class="case">${nl(c.enunciado)}</div><textarea class="v49-answer" id="sp-${k}" placeholder="Escreva sua resposta para a situação-problema..."></textarea><button class="v49-analyze" onclick='analyzeV49("sp-${k}",${JSON.stringify(c.resposta_esperada||"")})'>Analisar e corrigir</button><div id="fb-sp-${k}"></div></section>`).join('');
+    body+=qs.slice(0,1).map(q=>{
+      const al=SB2.alternativas.filter(x=>x.questao_id===q.id);
+      return `<section class="lesson"><h2>Questão de múltipla escolha</h2><p>${nl(q.enunciado)}</p>${al.map(x=>`<button class="v49-choice" onclick='gradeV49(this,${x.correta},${JSON.stringify(q.explicacao||"")})'><b>${esc(x.letra)})</b> ${esc(x.texto)}</button>`).join('')}<div class="v49-choice-feedback"></div></section>`;
+    }).join('');
+  }
+  M.innerHTML=`<div id="v49"><div class="journey"><button class="back" onclick="openProfessor2('${a.professor_id}')">← Aulas de ${esc(p?.nome||'')}</button><article class="lesson"><h1>${esc(a.titulo)}</h1><div class="mut">Aula por blocos</div></article>${nav}${body}</div></div>`;
 }
 
 /* Intercepta somente o 2º bimestre; o 1º continua exatamente no fluxo local da v45. */
@@ -965,28 +973,39 @@ const _openBimesterV46=openBimester;
 openBimester=function(n){ if(Number(n)===2) return openBimester2Dynamic(); return _openBimesterV46(n); };
 </script>
 
+
 <style>
-#dynamic2-root .lesson{padding:22px!important;margin:16px 0!important}
-#dynamic2-root .cesar-direct{line-height:1.6!important}
-#dynamic2-root .cesar-direct br{display:none}
-#dynamic2-root .block-nav{display:flex;gap:8px;overflow-x:auto;padding:8px 0 14px}
-#dynamic2-root .block-nav button{white-space:nowrap;border:1px solid #ddd3e8;background:#fff;border-radius:999px;padding:9px 13px;font-weight:700}
-#dynamic2-root .block-nav .active{background:#eee3fa;border-color:#9d65ee;color:#60329b}
-#dynamic2-root .study-answer{width:100%;min-height:150px;box-sizing:border-box;border:1px solid #d7d0dc;border-radius:16px;padding:14px;font:inherit;line-height:1.45;margin-top:12px}
-#dynamic2-root .analyze-btn{border:0;border-radius:14px;background:#7a46bd;color:#fff;padding:12px 16px;font-weight:800;margin-top:10px}
-#dynamic2-root .feedback-box{margin-top:12px;padding:14px;border-radius:14px;background:#f2ecf9;line-height:1.5}
-#dynamic2-root .choice{display:block;width:100%;text-align:left;border:1px solid #d7d0dc;background:#fff;border-radius:16px;padding:14px;margin:9px 0;font:inherit}
-#dynamic2-root .choice.ok{outline:2px solid #3a9b62} #dynamic2-root .choice.no{outline:2px solid #c95656}
+#v49 .v49-nav{display:flex;gap:8px;overflow-x:auto;padding:4px 0 14px}
+#v49 .v49-nav button{white-space:nowrap;border:1px solid #ddd3e8;background:#fff;border-radius:999px;padding:9px 13px;font-weight:700}
+#v49 .v49-nav button.active{background:#eee3fa;border-color:#9d65ee;color:#60329b}
+#v49 .v49-block{padding:22px!important;margin:10px 0!important}
+#v49 .v49-text{line-height:1.58!important}
+#v49 .v49-text br{display:none}
+#v49 .v49-next{display:flex;justify-content:space-between;gap:10px;margin-top:20px}
+#v49 .v49-answer{width:100%;min-height:150px;box-sizing:border-box;border:1px solid #d7d0dc;border-radius:16px;padding:14px;font:inherit;line-height:1.45;margin-top:12px}
+#v49 .v49-analyze{border:0;border-radius:14px;background:#7a46bd;color:#fff;padding:12px 16px;font-weight:800;margin-top:10px}
+#v49 .v49-feedback{margin-top:12px;padding:14px;border-radius:14px;background:#f2ecf9;line-height:1.5}
+#v49 .v49-choice{display:block;width:100%;text-align:left;border:1px solid #d7d0dc;background:#fff;border-radius:16px;padding:14px;margin:9px 0;font:inherit}
+#v49 .v49-choice.ok{outline:2px solid #3a9b62} #v49 .v49-choice.no{outline:2px solid #c95656}
 </style>
 <script>
-function shell2(h){M.innerHTML='<div id="dynamic2-root">'+h+'</div>'}
-openBimester2Dynamic=async function(){shell2('<div class="page-head"><h1>2º Bimestre</h1><p>Carregando...</p></div>');try{await loadSegundoBimestre();let c=SB2.professores.map(p=>{let a=SB2.aulas.filter(x=>x.professor_id===p.id);return `<button class="card" onclick="openProfessor2('${p.id}')"><h3>${esc(p.nome)}</h3><div class="mut">${a.length?a.length+' aula'+(a.length>1?'s':''):'Nenhuma aula publicada'}</div></button>`}).join('');shell2(`<div class="page-head"><button class="back" onclick="home()">← Início</button><h1>2º Bimestre</h1></div><div class="cards">${c}</div>`)}catch(e){shell2(`<h1>2º Bimestre</h1><div class="feedback">${esc(e.message)}</div>`)}}
-openProfessor2=function(pid){let p=SB2.professores.find(x=>x.id===pid),aa=SB2.aulas.filter(a=>a.professor_id===pid);shell2(`<div class="page-head"><button class="back" onclick="openBimester2Dynamic()">← 2º Bimestre</button><h1>${esc(p?.nome||'')}</h1><p>Aulas publicadas</p></div><div class="cards">${aa.length?aa.map(a=>`<button class="card" onclick="openLesson2('${a.id}',0)"><h3>${esc(a.titulo)}</h3><div class="mut">${SB2.topicos.filter(t=>t.aula_id===a.id).length} blocos</div></button>`).join(''):'<div class="card">Nenhuma aula publicada ainda.</div>'}</div>`)}
-openLesson2=function(aid,idx=0){let a=SB2.aulas.find(x=>x.id===aid),p=SB2.professores.find(x=>x.id===a?.professor_id),tops=SB2.topicos.filter(t=>t.aula_id===aid),casos=SB2.casos.filter(c=>c.aula_id===aid),qs=SB2.questoes.filter(q=>q.aula_id===aid),n=tops.length,i=Math.max(0,Math.min(idx,n));let body='',nav=tops.map((t,j)=>`<button class="${j===i?'active':''}" onclick="openLesson2('${aid}',${j})">Bloco ${j+1}</button>`).join('');
-if(i<n){let t=tops[i];body=`<section class="lesson"><span class="prof">Prof. ${esc(p?.nome||'')}</span><h2>${esc(t.titulo)}</h2><div class="cesar-direct">${nl(t.conteudo)}</div><div style="display:flex;justify-content:space-between;gap:10px;margin-top:20px">${i?`<button class="back" onclick="openLesson2('${aid}',${i-1})">← Anterior</button>`:'<span></span>'}<button class="back" onclick="openLesson2('${aid}',${i+1})">${i===n-1?'Atividades':'Próximo'} →</button></div></section>`}else{body=casos.map((c,k)=>`<section class="lesson"><h2>Situação-problema</h2><div class="case">${nl(c.enunciado)}</div><textarea class="study-answer" id="case-${k}" placeholder="Escreva sua resposta para a situação-problema..."></textarea><button class="analyze-btn" onclick='analyzeOpen("case-${k}",${JSON.stringify(c.resposta_esperada||"")})'>Analisar e corrigir</button><div id="fb-case-${k}"></div></section>`).join('');
-body+=qs.map((q,k)=>{let al=SB2.alternativas.filter(x=>x.questao_id===q.id);if(al.length)return `<section class="lesson"><h2>Questão de fixação</h2><p>${nl(q.enunciado)}</p>${al.map(x=>`<button class="choice" onclick='gradeChoice(this,${x.correta},${JSON.stringify(q.explicacao||"")})'><b>${esc(x.letra)})</b> ${esc(x.texto)}</button>`).join('')}<div class="choice-feedback"></div></section>`;return `<section class="lesson"><h2>Questão de fixação</h2><p>${nl(q.enunciado)}</p><textarea class="study-answer" id="open-${k}" placeholder="Escreva sua resposta..."></textarea><button class="analyze-btn" onclick='analyzeOpen("open-${k}",${JSON.stringify(q.resposta_esperada||q.explicacao||"")})'>Analisar e corrigir</button><div id="fb-open-${k}"></div></section>`}).join('')}
-shell2(`<div class="journey"><button class="back" onclick="openProfessor2('${a.professor_id}')">← Aulas de ${esc(p?.nome||'')}</button><article class="lesson"><h1>${esc(a.titulo)}</h1></article>${i<n?`<div class="block-nav">${nav}</div>`:''}${body}</div>`)}
-function gradeChoice(b,c,e){let s=b.closest('.lesson');s.querySelectorAll('.choice').forEach(x=>{x.disabled=true;x.classList.remove('ok','no')});b.classList.add(c?'ok':'no');s.querySelector('.choice-feedback').innerHTML=`<div class="feedback-box"><b>${c?'✓ Correto':'✗ Incorreto'}</b>${e?'<br>'+nl(e):''}</div>`}
-function analyzeOpen(id,expected){let ta=document.getElementById(id),o=document.getElementById('fb-'+id),ans=ta.value.trim();if(!ans){o.innerHTML='<div class="feedback-box">Escreva sua resposta primeiro.</div>';return}if(!expected){o.innerHTML='<div class="feedback-box">Resposta registrada. Ainda não há critérios de correção cadastrados.</div>';return}let norm=x=>x.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9\s]/g,' '),stop=new Set('a o e de da do das dos em no na nos nas um uma para por com que se ao aos as os sua seu suas seus como'.split(' ')),keys=[...new Set(norm(expected).split(/\s+/).filter(w=>w.length>4&&!stop.has(w)))],user=new Set(norm(ans).split(/\s+/)),r=keys.length?keys.filter(k=>user.has(k)).length/keys.length:0,label=r>=.45?'✓ Resposta consistente':r>=.22?'△ Parcialmente correta':'✗ Precisa revisar',msg=r>=.45?'Você contemplou os principais elementos esperados.':r>=.22?'Há elementos corretos, mas faltam pontos importantes.':'A resposta se distancia dos principais critérios esperados.';o.innerHTML=`<div class="feedback-box"><b>${label}</b><br>${msg}</div>`}
+function gradeV49(btn,correct,explanation){
+ const sec=btn.closest('.lesson'); sec.querySelectorAll('.v49-choice').forEach(b=>b.disabled=true);
+ btn.classList.add(correct?'ok':'no');
+ sec.querySelector('.v49-choice-feedback').innerHTML=`<div class="v49-feedback"><b>${correct?'✓ Correto':'✗ Incorreto'}</b>${explanation?'<br>'+nl(explanation):''}</div>`;
+}
+function analyzeV49(id,expected){
+ const ta=document.getElementById(id),out=document.getElementById('fb-'+id),ans=ta.value.trim();
+ if(!ans){out.innerHTML='<div class="v49-feedback">Escreva sua resposta primeiro.</div>';return}
+ if(!expected){out.innerHTML='<div class="v49-feedback">Resposta registrada. Ainda não há critérios de correção cadastrados.</div>';return}
+ const norm=x=>x.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9\s]/g,' ');
+ const stop=new Set('a o e de da do das dos em no na nos nas um uma para por com que se ao aos as os sua seu suas seus como'.split(' '));
+ const keys=[...new Set(norm(expected).split(/\s+/).filter(w=>w.length>4&&!stop.has(w)))],u=new Set(norm(ans).split(/\s+/));
+ const r=keys.length?keys.filter(k=>u.has(k)).length/keys.length:0;
+ const label=r>=.45?'✓ Resposta consistente':r>=.22?'△ Parcialmente correta':'✗ Precisa revisar';
+ const msg=r>=.45?'Você contemplou os principais elementos esperados.':r>=.22?'Há elementos corretos, mas faltam pontos importantes.':'A resposta se distancia dos principais critérios esperados.';
+ out.innerHTML=`<div class="v49-feedback"><b>${label}</b><br>${msg}</div>`;
+}
 </script>
+
 </body></html>
