@@ -204,16 +204,56 @@ function openSecondProfessor(id){
  const lessons=D2[id]||[];
  M.innerHTML=`<button class="back" onclick="openBimester(2)">← 2º Bimestre</button><section class="hero"><span class="tag">GESTÃO DE PESSOAS E MÉTODOS DE APLICAÇÃO</span><h1>Prof. ${names[id]}</h1><p>2º Bimestre</p></section>${lessons.length?lessons.map((l,i)=>`<div class="topic" onclick="openSecondLesson('${id}',${i})"><div><b>${l.title}</b><div class="mut">${l.sections.length} tópicos • estudo de caso • questão avaliativa</div></div><b>→</b></div>`).join(''):`<div class="card"><b>Conteúdo ainda não adicionado.</b></div>`}`;
 }
-function openSecondLesson(id,i){
+let secondLessonState={id:null,i:0,step:0};
+function openSecondLesson(id,i,step=0){
  if(!requireAuth())return;
- const l=D2[id][i], names={juliana:'Juliana',cesar:'César',patricia:'Patrícia',mariana:'Mariana'};
- M.innerHTML=`<button class="back" onclick="openSecondProfessor('${id}')">← Prof. ${names[id]}</button>
- <section class="hero"><span class="tag">2º BIMESTRE • PROF. ${names[id].toUpperCase()}</span><h1>${l.title}</h1><p>Gestão de Pessoas e Métodos de Aplicação</p></section>
- ${l.sections.map((s,idx)=>`<article class="card" style="margin-bottom:14px"><h2>${s[0]}</h2><button class="note-btn" onclick='noteFromStudy(${JSON.stringify(s[0])},${JSON.stringify(s[1].split("\n\n")[0])},"2º Bimestre • Prof. ${names[id]}")'>✎ Anotar conceito</button><div style="white-space:pre-line;line-height:1.65;margin-top:12px">${s[1]}</div></article>`).join('')}
- <article class="card" style="margin-top:18px"><span class="tag">ESTUDO DE CASO INTEGRADOR</span><p style="white-space:pre-line;line-height:1.65">${l.case}</p></article>
- <article class="card" style="margin-top:14px"><span class="tag">QUESTÃO AVALIATIVA</span><h3>${l.question}</h3>${l.options.map(o=>`<div style="padding:8px 0">${o}</div>`).join('')}<details style="margin-top:10px"><summary><b>Ver resposta</b></summary><p><b>Resposta: ${l.answer}.</b></p></details></article>`;
+ secondLessonState={id,i,step};
+ renderSecondLesson();
 }
-
+function renderSecondLesson(){
+ const {id,i,step}=secondLessonState;
+ const l=D2[id][i], names={juliana:'Juliana',cesar:'César',patricia:'Patrícia',mariana:'Mariana'};
+ const total=l.sections.length;
+ if(step<total){
+  const sec=l.sections[step];
+  M.innerHTML=`<button class="back" onclick="${step===0?`openSecondProfessor('${id}')`:'secondLessonPrev()'}">← ${step===0?'Prof. '+names[id]:'Tópico anterior'}</button>
+  <section class="hero"><span class="tag">2º BIMESTRE • PROF. ${names[id].toUpperCase()}</span><h1>${l.title}</h1><p>Tópico ${step+1} de ${total}</p></section>
+  <div style="display:flex;gap:6px;margin:0 0 18px">${l.sections.map((_,x)=>`<span style="height:6px;flex:1;border-radius:999px;background:${x<=step?'var(--p)':'#ddd'}"></span>`).join('')}</div>
+  <article class="card"><h2>${sec[0]}</h2><button class="note-btn" onclick='noteFromStudy(${JSON.stringify(sec[0])},${JSON.stringify(sec[1].split("\n\n")[0])},"2º Bimestre • Prof. ${names[id]}")'>✎ Anotar conceito</button><div style="white-space:pre-line;line-height:1.65;margin-top:12px">${sec[1]}</div></article>
+  <div class="actions" style="margin-top:18px"><button class="ghost" onclick="secondLessonPrev()" ${step===0?'disabled':''}>← Voltar</button><button class="primary" onclick="secondLessonNext()">${step===total-1?'Ir para as questões →':'Próximo tópico →'}</button></div>`;
+ }else{
+  renderSecondAssessment(l,id,i,names[id]);
+ }
+}
+function secondLessonNext(){secondLessonState.step++;renderSecondLesson();window.scrollTo({top:0,behavior:'smooth'})}
+function secondLessonPrev(){if(secondLessonState.step>0){secondLessonState.step--;renderSecondLesson();window.scrollTo({top:0,behavior:'smooth'})}else openSecondProfessor(secondLessonState.id)}
+function secondAssessmentData(id,i,l){
+ const expected={
+  'juliana-0':'A resposta deve relacionar a alta rotatividade e a queda de desempenho às práticas de Gestão de Pessoas, analisando comunicação, liderança, feedback, reconhecimento, desenvolvimento, clima e cultura. Não basta oferecer recompensa financeira ou responsabilizar individualmente os trabalhadores; é necessário compreender as condições organizacionais e propor práticas coerentes de acompanhamento e desenvolvimento.',
+  'juliana-1':'A resposta deve analisar os indicadores de afastamento, rotatividade e esgotamento como possíveis sinais de problemas nas condições e na organização do trabalho. O psicólogo deve investigar metas, jornadas, sobrecarga, gestão tecnológica, limites entre trabalho e descanso, relações e clima organizacional, evitando psicologizar problemas estruturais ou limitar a intervenção à adaptação individual.'
+ };
+ return {open:`Com base no conteúdo estudado, faça uma análise do estudo de caso apresentado abaixo. Quais aspectos o psicólogo organizacional deveria considerar?`,expected:expected[id+'-'+i]||'A resposta deve utilizar os conceitos centrais da aula, relacionando-os ao caso e apresentando uma análise técnica que considere simultaneamente trabalhador, trabalho e organização.'};
+}
+function renderSecondAssessment(l,id,i,name){
+ const a=secondAssessmentData(id,i,l);
+ M.innerHTML=`<button class="back" onclick="secondLessonPrev()">← Último tópico</button>
+ <section class="hero"><span class="tag">REVISÃO • 2º BIMESTRE • PROF. ${name.toUpperCase()}</span><h1>Questões da aula</h1><p>Responda às duas questões para concluir a aula.</p></section>
+ <article class="card" style="margin-bottom:14px"><span class="tag">1 • MÚLTIPLA ESCOLHA</span><h3>${l.question}</h3><div id="secondMC">${l.options.map((o,x)=>`<button class="option" style="width:100%;text-align:left;margin:6px 0" onclick="answerSecondMC(this,${x},'${l.answer}')">${o}</button>`).join('')}<div class="qfeed" style="margin-top:10px"></div></div></article>
+ <article class="card" style="margin-bottom:14px"><span class="tag">2 • QUESTÃO ABERTA</span><div class="case" style="margin-top:12px"><b>Estudo de caso</b><p style="white-space:pre-line">${l.case}</p></div><h3>${a.open}</h3><textarea id="secondOpenAnswer" style="width:100%;min-height:160px" placeholder="Escreva sua resposta aqui antes de liberar a correção..."></textarea><button class="primary" style="width:100%;margin-top:12px" onclick="correctSecondOpen(${JSON.stringify(a.expected)})">Corrigir minha resposta</button><div id="secondOpenFeedback"></div></article>
+ <div class="actions"><button class="ghost" onclick="secondLessonPrev()">← Voltar ao conteúdo</button><button class="primary" onclick="openSecondProfessor('${id}')">Concluir aula</button></div>`;
+}
+function answerSecondMC(btn,index,answer){
+ const box=document.getElementById('secondMC'),correct='ABCD'.indexOf(answer.toUpperCase());
+ box.querySelectorAll('.option').forEach((b,x)=>{b.disabled=true;if(x===correct)b.classList.add('ok')});
+ if(index!==correct)btn.classList.add('no');
+ box.querySelector('.qfeed').innerHTML=index===correct?'<div class="feedback"><b>✓ Correto.</b><p>Você identificou a alternativa mais adequada ao conteúdo da aula.</p></div>':`<div class="feedback"><b>✕ Revise este ponto.</b><p>A resposta esperada é a alternativa <b>${answer}</b>. Compare-a com os conceitos apresentados na aula.</p></div>`;
+}
+function correctSecondOpen(expected){
+ const a=document.getElementById('secondOpenAnswer'),f=document.getElementById('secondOpenFeedback');
+ if(!a.value.trim()){f.innerHTML='<div class="feedback"><b>Escreva sua tentativa primeiro.</b><p>A resposta esperada só será liberada depois que você registrar sua própria resposta.</p></div>';return}
+ f.innerHTML=`<div class="feedback"><h3>Correção orientada</h3><p>Compare sua construção com os elementos essenciais abaixo. A correção serve como referência para você revisar o raciocínio.</p><h3>Resposta esperada</h3><p>${expected}</p></div>`;
+ f.scrollIntoView({behavior:'smooth',block:'start'});
+}
 function openBimester(n){if(!requireAuth())return;
   if(n===1){
     M.innerHTML=`<section class="hero"><span class="tag">PSICOLOGIA ORGANIZACIONAL • 1º BIMESTRE</span><h1>1º Bimestre</h1><p>Conteúdos, jornadas e revisões do primeiro bimestre.</p></section><h2>Professores</h2><div class="grid">${D.subjects.filter(s=>['juliana','cesar','patricia','mariana'].includes(s.id)).map(s=>`<div class="card" onclick="openSubject('${s.id}')"><span class="prof">Prof. ${s.prof}</span><h3>${s.name}</h3><span class="mut">${D.journeys[s.id]?D.journeys[s.id].length+' jornadas completas':''}</span></div>`).join('')}<div class="card" onclick="quizHome()"><span class="prof">REVISÃO</span><h3>Quizzes do 1º Bimestre</h3><span class="mut">Teste e revise os conteúdos estudados</span></div></div>`;
