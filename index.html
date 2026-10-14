@@ -315,14 +315,8 @@ function authScreen(mode='login'){
  ${mode==='signup'?`<div class="field"><label>Confirmar senha</label><input id="authPass2" type="password" autocomplete="new-password"></div>`:''}
  <div id="authMsg" class="mut" style="min-height:20px;font-size:12px"></div>
  <button class="primary" style="width:100%" onclick="${mode==='signup'?'createLocalAccount()':'loginLocal()'}">${mode==='signup'?'Criar conta':'Entrar'}</button>
- ${mode==='login'?`<button class="note-btn" style="width:100%;margin-top:10px;padding:12px" onclick="enterTestMode()">👁 Visualizar versão de teste sem login</button>`:''}
+
  </div></div>`;
-}
-function enterTestMode(){
- localStorage.setItem(AUTH_KEY,JSON.stringify({name:'Modo de teste',email:'teste@psico.local',birth:'2000-01-01',logged:true}));
- updateUserChip();
- setAuthLocked(false);
- openBimester(2);
 }
 function createLocalAccount(){
  const name=document.getElementById('authName').value.trim(),email=document.getElementById('authEmail').value.trim(),birth=document.getElementById('authBirth').value,p=document.getElementById('authPass').value,p2=document.getElementById('authPass2').value,msg=document.getElementById('authMsg');
