@@ -246,7 +246,7 @@ async function openSecondProfessor(id){
  try{
   const lessons=await sbGet(`aulas?select=id,numero,titulo,resumo&bimestre_id=eq.${BIM2_ID}&professor_id=eq.${PROF_IDS[id]}&publicada=eq.true&order=ordem.asc`);
   M.innerHTML=`<button class="back" onclick="openBimester(2)">← 2º Bimestre</button><section class="hero"><span class="tag">GESTÃO DE PESSOAS E MÉTODOS DE APLICAÇÃO</span><h1>Prof. ${names[id]}</h1><p>2º Bimestre • conteúdo carregado do Supabase</p></section>${lessons.length?lessons.map(l=>`<div class="topic" onclick="openSecondLessonDB('${id}','${l.id}')"><div><b>Aula ${l.numero} — ${l.titulo}</b><div class="mut">${l.resumo||'Abrir conteúdo da aula'}</div></div><b>→</b></div>`).join(''):`<div class="card"><b>Conteúdo ainda não adicionado.</b></div>`}`;
- }catch(e){renderSecondLocal(id,names,'A conexão com o banco não respondeu neste teste. Exibindo a cópia local desta aula para você continuar a revisão.')}
+ }catch(e){renderSecondLocal(id,names,'A conexão com o banco não respondeu. Exibindo a cópia local desta aula para você continuar a revisão.')}
 }
 async function openSecondLessonDB(id,aulaId){
  if(!requireAuth())return;
@@ -293,55 +293,33 @@ function openBibliographyBook(){
 }
 
 const AUTH_KEY='psicoUserV1', NOTES_KEY='psicoNotesV1';
-function getUser(){try{return JSON.parse(localStorage.getItem(AUTH_KEY)||'null')}catch(e){return null}}
-function setAuthLocked(locked){
- document.body.classList.toggle('auth-locked',!!locked);
- const side=document.getElementById('side');
- if(side&&locked)side.classList.remove('open');
-}
-function requireAuth(){
- const u=getUser();
- if(!u||!u.logged){authScreen('login');return false}
- setAuthLocked(false);return true;
-}
+const PSICO_SESSION='psicoSupabaseSessionV1';
+let psicoSession=null;
+function getUser(){return psicoSession?.user?{id:psicoSession.user.id,name:psicoSession.user.user_metadata?.full_name||psicoSession.user.email?.split('@')[0]||'Estudante',email:psicoSession.user.email,logged:true}:null}
+function setAuthLocked(locked){document.body.classList.toggle('auth-locked',!!locked);if(locked)document.getElementById('side')?.classList.remove('open')}
+function requireAuth(){if(!getUser()){authScreen('login');return false}setAuthLocked(false);return true}
 function authScreen(mode='login'){
  setAuthLocked(true);
- M.innerHTML=`<div class="auth-wrap"><div class="auth-card"><span class="tag">PSICO EM FORMAÇÃO</span><h1>${mode==='signup'?'Criar minha conta':'Entrar'}</h1><p>${mode==='signup'?'Crie seu acesso para começar a organizar seus estudos.':'Acesse seu ambiente de estudos.'}</p>
+ M.innerHTML=`<div class="auth-wrap"><div class="auth-card"><span class="tag">PSICO EM FORMAÇÃO</span><h1>${mode==='signup'?'Criar minha conta':mode==='reset'?'Recuperar senha':'Entrar'}</h1><p>Seu acesso agora é sincronizado com o banco de dados.</p>
  <div class="auth-tabs"><button class="${mode==='login'?'active':''}" onclick="authScreen('login')">Entrar</button><button class="${mode==='signup'?'active':''}" onclick="authScreen('signup')">Criar conta</button></div>
- ${mode==='signup'?`<div class="field"><label>Nome</label><input id="authName" autocomplete="name"></div>`:''}
+ ${mode==='signup'?'<div class="field"><label>Nome</label><input id="authName" autocomplete="name" maxlength="120"></div>':''}
  <div class="field"><label>E-mail</label><input id="authEmail" type="email" autocomplete="email"></div>
- ${mode==='signup'?`<div class="field"><label>Data de nascimento</label><input id="authBirth" type="date"></div>`:''}
- <div class="field"><label>Senha</label><input id="authPass" type="password" autocomplete="${mode==='signup'?'new-password':'current-password'}"></div>
- ${mode==='signup'?`<div class="field"><label>Confirmar senha</label><input id="authPass2" type="password" autocomplete="new-password"></div>`:''}
- <div id="authMsg" class="mut" style="min-height:20px;font-size:12px"></div>
- <button class="primary" style="width:100%" onclick="${mode==='signup'?'createLocalAccount()':'loginLocal()'}">${mode==='signup'?'Criar conta':'Entrar'}</button>
- ${mode==='login'?`<button class="note-btn" style="width:100%;margin-top:10px;padding:12px" onclick="enterTestMode()">👁 Visualizar versão de teste sem login</button>`:''}
+ ${mode!=='reset'?`<div class="field"><label>Senha</label><input id="authPass" type="password" autocomplete="${mode==='signup'?'new-password':'current-password'}"></div>`:''}
+ ${mode==='signup'?'<div class="field"><label>Confirmar senha</label><input id="authPass2" type="password" autocomplete="new-password"></div>':''}
+ <div id="authMsg" class="mut" role="status" aria-live="polite" style="min-height:20px;font-size:13px;margin:12px 0"></div>
+ <button class="primary" id="authSubmit" style="width:100%" onclick="${mode==='signup'?'createLocalAccount()':mode==='reset'?'resetPsicoPassword()':'loginLocal()'}">${mode==='signup'?'Criar conta':mode==='reset'?'Enviar recuperação':'Entrar'}</button>
+ ${mode==='login'?'<button class="note-btn" style="width:100%;margin-top:10px;padding:12px" onclick="authScreen(\'reset\')">Esqueci minha senha</button>':''}
  </div></div>`;
 }
-function enterTestMode(){
- localStorage.setItem(AUTH_KEY,JSON.stringify({name:'Modo de teste',email:'teste@psico.local',birth:'2000-01-01',logged:true}));
- updateUserChip();
- setAuthLocked(false);
- openBimester(2);
-}
-function createLocalAccount(){
- const name=document.getElementById('authName').value.trim(),email=document.getElementById('authEmail').value.trim(),birth=document.getElementById('authBirth').value,p=document.getElementById('authPass').value,p2=document.getElementById('authPass2').value,msg=document.getElementById('authMsg');
- if(!name||!email||!birth||!p){msg.textContent='Preencha todos os campos.';return}
- if(p.length<6){msg.textContent='Use uma senha com pelo menos 6 caracteres.';return}
- if(p!==p2){msg.textContent='As senhas não coincidem.';return}
- // Protótipo local: não persiste a senha. Autenticação real será ligada ao backend na hospedagem.
- localStorage.setItem(AUTH_KEY,JSON.stringify({name,email,birth,logged:true}));
- updateUserChip(); setAuthLocked(false); studySetup();
-}
-function loginLocal(){
- const email=document.getElementById('authEmail').value.trim(),p=document.getElementById('authPass').value,msg=document.getElementById('authMsg');
- const u=getUser();
- if(!u){msg.textContent='Ainda não há uma conta criada neste navegador.';return}
- if(email!==u.email||!p){msg.textContent='Confira o e-mail e a senha.';return}
- u.logged=true;localStorage.setItem(AUTH_KEY,JSON.stringify(u));updateUserChip();setAuthLocked(false);home();
-}
-function logoutUser(){const u=getUser();if(u){u.logged=false;localStorage.setItem(AUTH_KEY,JSON.stringify(u))}updateUserChip();setAuthLocked(true);authScreen('login')}
-function updateUserChip(){const el=document.getElementById('userChip'),u=getUser();if(el)el.textContent=u&&u.logged?'● '+u.name:''}
+function psicoMessage(s){const e=document.getElementById('authMsg');if(e)e.textContent=s}
+async function psicoAuthRequest(endpoint,data,token){const r=await fetch(`${SUPABASE_URL}/auth/v1/${endpoint}`,{method:'POST',headers:{'apikey':SUPABASE_KEY,'Content-Type':'application/json',...(token?{'Authorization':`Bearer ${token}`}:{})},body:JSON.stringify(data)});const x=await r.json().catch(()=>({}));if(!r.ok)throw Error(x.msg||x.error_description||x.message||'Não foi possível concluir.');return x}
+function psicoStoreSession(s){psicoSession=s?.access_token&&s?.user?s:null;if(psicoSession)localStorage.setItem(PSICO_SESSION,JSON.stringify(psicoSession));else localStorage.removeItem(PSICO_SESSION);localStorage.removeItem(AUTH_KEY);updateUserChip()}
+async function createLocalAccount(){const name=document.getElementById('authName').value.trim(),email=document.getElementById('authEmail').value.trim(),password=document.getElementById('authPass').value,p2=document.getElementById('authPass2').value; if(!name||!email||!password){psicoMessage('Preencha nome, e-mail e senha.');return}if(password.length<6){psicoMessage('Use pelo menos 6 caracteres na senha.');return}if(password!==p2){psicoMessage('As senhas não coincidem.');return}const btn=document.getElementById('authSubmit');btn.disabled=true;try{const x=await psicoAuthRequest('signup',{email,password,data:{full_name:name}});if(x.access_token){psicoStoreSession(x);setAuthLocked(false);studySetup()}else psicoMessage('Cadastro recebido. Verifique seu e-mail para confirmar a conta e depois entre.')}catch(e){psicoMessage(e.message)}finally{btn.disabled=false}}
+async function loginLocal(){const email=document.getElementById('authEmail').value.trim(),password=document.getElementById('authPass').value;if(!email||!password){psicoMessage('Informe e-mail e senha.');return}const btn=document.getElementById('authSubmit');btn.disabled=true;try{const x=await psicoAuthRequest('token?grant_type=password',{email,password});psicoStoreSession(x);setAuthLocked(false);home()}catch(e){psicoMessage('Não foi possível entrar. Verifique seus dados e a confirmação do e-mail.')}finally{btn.disabled=false}}
+async function resetPsicoPassword(){const email=document.getElementById('authEmail').value.trim();if(!email){psicoMessage('Informe seu e-mail.');return}try{await psicoAuthRequest('recover',{email});psicoMessage('Se o e-mail estiver cadastrado, você receberá instruções de recuperação.')}catch(e){psicoMessage('Não foi possível solicitar a recuperação.')}}
+async function logoutUser(){const token=psicoSession?.access_token;psicoStoreSession(null);setAuthLocked(true);authScreen('login');if(token)fetch(`${SUPABASE_URL}/auth/v1/logout`,{method:'POST',headers:{apikey:SUPABASE_KEY,Authorization:`Bearer ${token}`}}).catch(()=>{})}
+function updateUserChip(){const el=document.getElementById('userChip'),u=getUser();if(el)el.textContent=u?'● '+u.name:''}
+async function psicoRestoreSession(){try{const old=JSON.parse(localStorage.getItem(PSICO_SESSION)||'null');if(old?.refresh_token){const x=await psicoAuthRequest('token?grant_type=refresh_token',{refresh_token:old.refresh_token});psicoStoreSession(x)}}catch(e){psicoStoreSession(null)}if(getUser()){setAuthLocked(false);home()}else authScreen('login')}
 function getNotes(){try{return JSON.parse(localStorage.getItem(NOTES_KEY)||'[]')}catch(e){return []}}
 function saveNotes(a){localStorage.setItem(NOTES_KEY,JSON.stringify(a))}
 function noteFromStudy(title,concept,meta='Conteúdo de estudo'){
@@ -514,9 +492,7 @@ function answerMC(btn,i,ans,why){let box=btn.parentElement;box.querySelectorAll(
 function caseHTML(j){return `<div class="case"><b>Cenário / tarefa</b><p>${j.case.prompt}</p></div><h3>Sua resposta</h3><textarea id="answer" placeholder="Responda antes de liberar a correção..."></textarea><button class="primary" style="width:100%;margin-top:12px" onclick="correctCase()">Corrigir minha resposta</button><div id="feedback"></div><div class="actions"><button class="ghost" onclick="prev()">← Voltar</button></div>`}
 function correctCase(){let j=D.journeys[cur.sid][cur.ji],a=document.getElementById('answer'),f=document.getElementById('feedback');if(!a.value.trim()){f.innerHTML='<div class="feedback"><b>Escreva sua tentativa primeiro.</b><p>A resposta esperada só aparece depois que você se compromete com uma resposta.</p></div>';return}let r=a.value.toLowerCase();let found=j.case.criteria.map(c=>{let words=c.toLowerCase().split(/[^a-záàâãéêíóôõúç]+/).filter(w=>w.length>4);return [c,words.some(w=>r.includes(w))]});f.innerHTML=`<div class="feedback"><h3>Correção orientada</h3><p>Use os critérios abaixo para comparar sua construção. A checagem automática é apenas um apoio; o mais importante é verificar se o raciocínio aparece de forma explícita.</p><div class="crit">${found.map(x=>`<span>${x[1]?'✓':'○'} ${x[0]}</span>`).join('')}</div><h3>Resposta esperada</h3><p>${j.case.expected}</p><button class="primary" onclick="finish()">Concluir jornada</button></div>`;f.scrollIntoView({behavior:'smooth',block:'start'})}
 function finish(){alert('Jornada concluída. Esta tentativa poderá futuramente alimentar seu progresso e suas lacunas de revisão.');openSubject(cur.sid)}
-function next(){cur.si++;show()}function prev(){if(cur.si>0){cur.si--;show()}else openSubject(cur.sid)}updateUserChip();
-const __u=getUser();
-if(!__u||!__u.logged){setAuthLocked(true);authScreen('login')}else{setAuthLocked(false);home()}
+function next(){cur.si++;show()}function prev(){if(cur.si>0){cur.si--;show()}else openSubject(cur.sid)}psicoRestoreSession();
 
 // ===== v34: jornada guiada do 2º bimestre + quiz por professor =====
 let S2STATE={id:null,lessonIndex:0,step:0,lesson:null,source:'local'};
