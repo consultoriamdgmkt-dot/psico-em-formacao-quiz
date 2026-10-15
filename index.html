@@ -317,29 +317,24 @@ function setAuthLocked(locked){
 }
 function requireAuth(){
  const u=getUser();
- if(!u||!u.logged){authScreen('login');return false}
+ if(!u||!u.logged||!psicoCloudSession&&!psicoSessionRead()){authScreen('login');return false}
  setAuthLocked(false);return true;
 }
 function authScreen(mode='login'){
  setAuthLocked(true);
  M.innerHTML=`<div class="auth-wrap"><div class="auth-card"><span class="tag">PSICO EM FORMAÇÃO</span><h1>${mode==='signup'?'Criar minha conta':'Entrar'}</h1><p>${mode==='signup'?'Crie seu acesso para começar a organizar seus estudos.':'Acesse seu ambiente de estudos.'}</p>
- <div class="auth-tabs"><button class="${mode==='login'?'active':''}" onclick="authScreen('login')">Entrar</button><button class="${mode==='signup'?'active':''}" onclick="authScreen('signup')">Criar conta</button></div>
+ <div class="auth-tabs"><button class="${mode==='login'?'active':''}" onclick="authScreen(&quot;login&quot;)">Entrar</button><button class="${mode==='signup'?'active':''}" onclick="authScreen('signup')">Criar conta</button></div>
  ${mode==='signup'?`<div class="field"><label>Nome</label><input id="authName" autocomplete="name"></div>`:''}
  <div class="field"><label>E-mail</label><input id="authEmail" type="email" autocomplete="email"></div>
  ${mode==='signup'?`<div class="field"><label>Data de nascimento</label><input id="authBirth" type="date"></div>`:''}
  <div class="field"><label>Senha</label><input id="authPass" type="password" autocomplete="${mode==='signup'?'new-password':'current-password'}"></div>
  ${mode==='signup'?`<div class="field"><label>Confirmar senha</label><input id="authPass2" type="password" autocomplete="new-password"></div>`:''}
  <div id="authMsg" class="mut" style="min-height:20px;font-size:12px"></div>
- <button class="primary" style="width:100%" onclick="${mode==='signup'?'createLocalAccount()':'loginLocal()'}">${mode==='signup'?'Criar conta':'Entrar'}</button>
+ <button class="primary" style="width:100%" onclick="${mode==='signup'?'psicoCloudSignup()':'psicoCloudLogin()'}">${mode==='signup'?'Criar conta':'Entrar'}</button>
  ${mode==='login'?`<button class="note-btn" style="width:100%;margin-top:10px;padding:12px" onclick="enterTestMode()">👁 Visualizar versão de teste sem login</button>`:''}
  </div></div>`;
 }
-function enterTestMode(){
- localStorage.setItem(AUTH_KEY,JSON.stringify({name:'Modo de teste',email:'teste@psico.local',birth:'2000-01-01',logged:true}));
- updateUserChip();
- setAuthLocked(false);
- openBimester(2);
-}
+function enterTestMode(){M.innerHTML='<div class="card"><button class="back" onclick="authScreen(&quot;login&quot;)">← Voltar</button><h2>Modo de demonstração</h2><p>Para manter sua rotina sincronizada em todos os dispositivos, entre com uma conta Supabase.</p></div>'}
 function createLocalAccount(){
  const name=document.getElementById('authName').value.trim(),email=document.getElementById('authEmail').value.trim(),birth=document.getElementById('authBirth').value,p=document.getElementById('authPass').value,p2=document.getElementById('authPass2').value,msg=document.getElementById('authMsg');
  if(!name||!email||!birth||!p){msg.textContent='Preencha todos os campos.';return}
@@ -356,7 +351,7 @@ function loginLocal(){
  if(email!==u.email||!p){msg.textContent='Confira o e-mail e a senha.';return}
  u.logged=true;localStorage.setItem(AUTH_KEY,JSON.stringify(u));updateUserChip();setAuthLocked(false);home();
 }
-function logoutUser(){const u=getUser();if(u){u.logged=false;localStorage.setItem(AUTH_KEY,JSON.stringify(u))}updateUserChip();setAuthLocked(true);authScreen('login')}
+function logoutUser(){psicoCloudLogout()}
 function updateUserChip(){const el=document.getElementById('userChip'),u=getUser();if(el)el.textContent=u&&u.logged?'● '+u.name:''}
 function getNotes(){try{return JSON.parse(localStorage.getItem(NOTES_KEY)||'[]')}catch(e){return []}}
 function saveNotes(a){localStorage.setItem(NOTES_KEY,JSON.stringify(a))}
@@ -390,10 +385,39 @@ function addNoteButtons(){
  });
 }
 
+// Sincronização autenticada: utiliza somente registros do próprio usuário (RLS).
+const PSICO_CLOUD_SESSION='psico_supabase_session_v2';
+const PSICO_PROFILE_PREFIX='PSICO_PERFIL_V2|';
+const PSICO_DAY_PREFIX='PSICO_ROTINA_V2|';
+let psicoCloudSession=null,psicoCloudLoading=false,psicoCloudReady=false;
+function psicoSessionRead(){try{return JSON.parse(localStorage.getItem(PSICO_CLOUD_SESSION)||'null')}catch(e){return null}}
+function psicoSessionSet(v){psicoCloudSession=v;if(v)localStorage.setItem(PSICO_CLOUD_SESSION,JSON.stringify(v));else localStorage.removeItem(PSICO_CLOUD_SESSION)}
+async function psicoAuthRequest(path,body){const r=await fetch(SUPABASE_URL+'/auth/v1/'+path,{method:'POST',headers:{apikey:SUPABASE_KEY,'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await r.json().catch(()=>({}));if(!r.ok)throw Error(data.msg||data.error_description||data.message||'Falha na autenticação');return data}
+async function psicoSessionValid(){let v=psicoCloudSession||psicoSessionRead();if(!v)return null;if(Date.now()<(v.expires_at||0)-60000){psicoCloudSession=v;return v}if(!v.refresh_token)return null;try{const d=await psicoAuthRequest('token?grant_type=refresh_token',{refresh_token:v.refresh_token});v={access_token:d.access_token,refresh_token:d.refresh_token,user:d.user,expires_at:Date.now()+d.expires_in*1000};psicoSessionSet(v);return v}catch(e){psicoSessionSet(null);return null}}
+async function psicoCloudFetch(table,query='',method='GET',payload){const v=await psicoSessionValid();if(!v?.user?.id)throw Error('Entre com sua conta Supabase para sincronizar.');const r=await fetch(SUPABASE_URL+'/rest/v1/'+table+(query?'?'+query:''),{method,headers:{apikey:SUPABASE_KEY,Authorization:'Bearer '+v.access_token,'Content-Type':'application/json',Prefer:'return=representation'},...(payload!==undefined?{body:JSON.stringify(payload)}:{})});if(!r.ok){const e=await r.json().catch(()=>({}));throw Error(e.message||'Erro Supabase '+r.status)}return r.json().catch(()=>[])}
+function psicoCloudStatus(t){let e=document.getElementById('psicoCloudStatus');if(e)e.textContent=t}
+async function psicoCloudLoad(){const v=await psicoSessionValid();if(!v?.user?.id)return false;psicoCloudLoading=true;try{
+ const rows=await psicoCloudFetch('study_planner','select=id,title,study_date,completed&user_id=eq.'+encodeURIComponent(v.user.id)+'&order=id.asc');
+ const profile=rows.filter(x=>x.title?.startsWith(PSICO_PROFILE_PREFIX)).at(-1);
+ if(profile){try{const p=JSON.parse(profile.title.slice(PSICO_PROFILE_PREFIX.length));if(p&&p.routine)localStorage.setItem(STUDY_KEY,JSON.stringify(p))}catch(e){}}
+ else{const local=getStudyProfile();if(local)await psicoCloudSaveProfile(local)}
+ const day=rows.filter(x=>x.title?.startsWith(PSICO_DAY_PREFIX)&&x.study_date===psicoTodayKey()).at(-1);
+ if(day){try{const x=JSON.parse(day.title.slice(PSICO_DAY_PREFIX.length));if(x&&x.date===psicoTodayKey())localStorage.setItem(PSICO_DAY_KEY,JSON.stringify(x))}catch(e){}}
+ else{const local=psicoDayRead();if(local.prof.length||local.activities.length||local.done.length)await psicoCloudSaveDay(local)}
+ psicoCloudReady=true;return true
+ }finally{psicoCloudLoading=false}}
+async function psicoCloudSaveRecord(prefix,value,date){const v=await psicoSessionValid();if(!v?.user?.id)throw Error('Sessão não autenticada');const existing=await psicoCloudFetch('study_planner','select=id,title,study_date&user_id=eq.'+encodeURIComponent(v.user.id)+'&order=id.asc');const matches=existing.filter(x=>x.title?.startsWith(prefix)&&(date?x.study_date===date:x.study_date===null));const payload={title:prefix+JSON.stringify(value),study_date:date||null};if(matches.length)return psicoCloudFetch('study_planner','id=eq.'+matches.at(-1).id,'PATCH',payload);return psicoCloudFetch('study_planner','', 'POST',{...payload,user_id:v.user.id,completed:false})}
+async function psicoCloudSaveProfile(p){return psicoCloudSaveRecord(PSICO_PROFILE_PREFIX,p,null)}
+async function psicoCloudSaveDay(x){return psicoCloudSaveRecord(PSICO_DAY_PREFIX,x,x.date)}
+async function psicoCloudLogin(){const email=document.getElementById('authEmail')?.value.trim(),password=document.getElementById('authPass')?.value,msg=document.getElementById('authMsg');if(!email||!password){msg.textContent='Informe e-mail e senha.';return}msg.textContent='Conectando…';try{const d=await psicoAuthRequest('token?grant_type=password',{email,password});psicoSessionSet({access_token:d.access_token,refresh_token:d.refresh_token,user:d.user,expires_at:Date.now()+d.expires_in*1000});localStorage.setItem(AUTH_KEY,JSON.stringify({name:d.user?.user_metadata?.full_name||email,email,logged:true,cloud:true}));await psicoCloudLoad();updateUserChip();setAuthLocked(false);home()}catch(e){msg.textContent='Não foi possível entrar: '+e.message}}
+async function psicoCloudSignup(){const name=document.getElementById('authName')?.value.trim(),email=document.getElementById('authEmail')?.value.trim(),password=document.getElementById('authPass')?.value,repeat=document.getElementById('authPass2')?.value,msg=document.getElementById('authMsg');if(!name||!email||!password){msg.textContent='Preencha nome, e-mail e senha.';return}if(password.length<6||password!==repeat){msg.textContent='Confira a senha e sua confirmação (mínimo de 6 caracteres).';return}msg.textContent='Criando conta…';try{const d=await psicoAuthRequest('signup',{email,password,data:{full_name:name}});if(d.access_token){psicoSessionSet({access_token:d.access_token,refresh_token:d.refresh_token,user:d.user,expires_at:Date.now()+d.expires_in*1000});localStorage.setItem(AUTH_KEY,JSON.stringify({name,email,logged:true,cloud:true}));await psicoCloudLoad();updateUserChip();setAuthLocked(false);home()}else msg.textContent='Cadastro solicitado. Confirme seu e-mail, se necessário, e depois entre.'}catch(e){msg.textContent='Não foi possível cadastrar: '+e.message}}
+async function psicoCloudLogout(){const v=await psicoSessionValid();if(v?.access_token){fetch(SUPABASE_URL+'/auth/v1/logout',{method:'POST',headers:{apikey:SUPABASE_KEY,Authorization:'Bearer '+v.access_token}}).catch(()=>{})}psicoSessionSet(null);psicoCloudReady=false;localStorage.removeItem(STUDY_KEY);localStorage.removeItem(PSICO_DAY_KEY);localStorage.setItem(AUTH_KEY,JSON.stringify({logged:false}));updateUserChip();authScreen('login')}
+async function psicoCloudStart(){const v=await psicoSessionValid();if(!v?.user?.id){authScreen('login');return}localStorage.setItem(AUTH_KEY,JSON.stringify({name:v.user.user_metadata?.full_name||v.user.email,email:v.user.email,logged:true,cloud:true}));try{await psicoCloudLoad()}catch(e){psicoCloudStatus('Falha de sincronização: '+e.message)}updateUserChip();setAuthLocked(false);home()}
+
 const STUDY_KEY='psicoStudyProfileV1';
 const dayNames={seg:'Segunda-feira',ter:'Terça-feira',qua:'Quarta-feira',qui:'Quinta-feira',sex:'Sexta-feira',sab:'Sábado',dom:'Domingo'};
 function getStudyProfile(){try{return JSON.parse(localStorage.getItem(STUDY_KEY)||'null')}catch(e){return null}}
-function saveStudyProfile(p){localStorage.setItem(STUDY_KEY,JSON.stringify(p))}
+function saveStudyProfile(p){localStorage.setItem(STUDY_KEY,JSON.stringify(p));psicoCloudSaveProfile(p).then(()=>psicoCloudStatus('Planejamento sincronizado')).catch(e=>psicoCloudStatus('Não sincronizado: '+e.message))}
 function studySetup(){if(!requireAuth())return;
   const old=getStudyProfile()||{bimester:2,profs:['Juliana','César','Patrícia','Mariana'],routine:{}};
   M.innerHTML=`<div class="setup"><button class="back" onclick="home()">← Voltar</button>
@@ -428,32 +452,33 @@ function saveStudySetup(){
 function routineItems(p){
   return Object.entries(p.routine||{}).filter(([k,v])=>v.on).map(([k,v])=>({day:k,name:dayNames[k],...v}));
 }
+// Rotina diária: dados adicionais isolados para preservar o perfil e o histórico existentes.
+const PSICO_DAY_KEY='psico_rotina_dia_v1';
+function psicoTodayKey(){const d=new Date();return [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-')}
+function psicoDayRead(){try{const x=JSON.parse(localStorage.getItem(PSICO_DAY_KEY)||'{}');return x.date===psicoTodayKey()?x:{date:psicoTodayKey(),prof:[],activities:[],done:[]}}catch(e){return {date:psicoTodayKey(),prof:[],activities:[],done:[]}}}
+function psicoDaySave(x){localStorage.setItem(PSICO_DAY_KEY,JSON.stringify(x));psicoCloudSaveDay(x).then(()=>psicoCloudStatus('Rotina sincronizada')).catch(e=>psicoCloudStatus('Não sincronizado: '+e.message))}
+function psicoDayToggle(kind,value){const x=psicoDayRead(),field=kind==='prof'?'prof':'activities';x[field]=x[field].includes(value)?x[field].filter(v=>v!==value):[...x[field],value];if(field==='activities')x.done=x.done.filter(v=>x.activities.includes(v));psicoDaySave(x);home()}
+function psicoDayDone(value){const x=psicoDayRead();x.done=x.done.includes(value)?x.done.filter(v=>v!==value):[...x.done,value];psicoDaySave(x);home()}
+function psicoDayGo(){const x=psicoDayRead();if(x.activities.includes('Quiz')&&typeof quizHome==='function'){quizHome();return}if(typeof openBimester==='function'){openBimester(getStudyProfile()?.bimester||2);return}home()}
 function home(){if(!requireAuth())return;
   const p=getStudyProfile();
-  if(!p){
-    M.innerHTML=`<div class="home-shell"><div class="home-welcome"><div><h1>Seu espaço de estudo</h1><p>Organize o que você está estudando e transforme isso em uma rotina.</p></div></div>
-    <div class="empty-state"><div style="font-size:36px">🧠</div><h2>Monte sua Home</h2><p>Selecione o núcleo formativo, o bimestre e os professores que fazem parte do seu momento atual. Depois, defina os dias e o tempo que pretende estudar.</p><button class="primary" onclick="studySetup()">Configurar meus estudos</button></div></div>`;
-    return;
-  }
-  const routine=routineItems(p);
-  const profText=p.profs.join(', ');
-  M.innerHTML=`<div class="home-shell">
-    <div class="home-welcome"><div><h1>Minha rotina de estudos</h1><p>A Home mostra apenas o que você escolheu estudar neste período.</p></div><button class="mini-btn" onclick="studySetup()">✎ Alterar seleção</button></div>
-    <section class="home-focus"><div class="home-focus-head"><h2>O que estou estudando agora</h2><span class="badge">FOCO ATUAL</span></div>
-      <div class="focus-grid"><div class="focus-box"><small>Núcleo formativo</small><b>${p.nucleus}</b></div><div class="focus-box"><small>Bimestre</small><b>${p.bimester}º Bimestre</b></div><div class="focus-box"><small>Professores</small><b>${profText}</b></div></div>
-    </section>
-    <div class="home-grid">
-      <section class="dash-card"><h2>Minha rotina</h2>${routine.length?routine.map(r=>`<div class="today-item"><span class="today-dot"></span><span class="time-pill">${r.time}</span><div class="today-main"><b>${r.name}</b><small>${r.min} minutos de estudo</small></div><span class="status-chip">${p.bimester}º bim.</span></div>`).join(''):`<div class="empty-state" style="padding:18px"><p>Você ainda não escolheu dias de estudo.</p><button class="mini-btn" onclick="studySetup()">Montar rotina</button></div>`}</section>
-      <section class="dash-card"><h2>Acesso rápido</h2><div class="quick-actions">
-        <button class="quick" onclick="openBimester(${p.bimester})"><b>▶ Continuar estudando</b><small>Abrir ${p.bimester}º Bimestre</small></button>
-        <button class="quick" onclick="plannerHome()"><b>▣ Meu Planner</b><small>Ver minha semana</small></button>
-        ${p.bimester===1?`<button class="quick" onclick="quizHome()"><b>✓ Fazer quiz</b><small>Revisar o 1º Bimestre</small></button>`:''}
-        <button class="quick" onclick="comingSoon('Cronograma')"><b>◷ Cronograma</b><small>Provas e entregas</small></button>
-      </div></section>
-      <section class="dash-card"><h2>Meu progresso neste foco</h2><p class="mut">O progresso será construído conforme você concluir jornadas e quizzes do conteúdo selecionado.</p><div class="progress-line"><i style="width:0%"></i></div><small class="mut">Comece uma jornada para registrar seu avanço.</small></section>
-      <section class="dash-card"><h2>Meu foco</h2><p class="mut">Sua Home não mistura todos os bimestres. Ela acompanha apenas <b>${p.nucleus} • ${p.bimester}º Bimestre</b> e os professores selecionados.</p><button class="mini-btn" onclick="studySetup()">Ajustar foco</button></section>
-    </div>
-  </div>`;
+  if(!p){M.innerHTML=`<div class="home-shell"><p id="psicoCloudStatus" class="mut" style="font-size:12px">☁ Dados sincronizados com sua conta</p><div class="home-welcome"><div><h1>Minha rotina de estudos</h1><p>Organize seu estudo de hoje e acompanhe sua semana.</p></div></div><div class="empty-state"><h2>Comece a organizar seus estudos</h2><p>Selecione o bimestre e os professores para personalizar a rotina.</p><button class="primary" onclick="studySetup()">Configurar meus estudos</button></div></div>`;return}
+  const x=psicoDayRead(),routine=routineItems(p),acts=['Leitura da aula','Flashcards','Quiz','Estudo de caso'];
+  const count=x.activities.length,done=x.activities.filter(v=>x.done.includes(v)).length,pct=count?Math.round(done/count*100):0;
+  const profs=(p.profs||[]).length?p.profs:['Juliana','César','Patrícia','Mariana'];
+  const esc=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  M.innerHTML=`<div class="home-shell"><p id="psicoCloudStatus" class="mut" style="font-size:12px">☁ Dados sincronizados com sua conta</p><div class="home-welcome"><div><h1>Minha rotina de estudos</h1><p>Seu estudo de hoje em primeiro lugar. Sua semana, logo abaixo.</p></div><button class="mini-btn" onclick="studySetup()">✎ Ajustar professores e horários</button></div>
+  <section class="dash-card" style="margin-bottom:14px;border-color:#d6c5e9"><h2>☀ Meu estudo de hoje</h2><p class="mut">Escolha livremente o que pretende estudar. Seu planejamento semanal continua disponível.</p>
+    <h3 style="font-size:15px;margin:16px 0 8px">Professores de hoje</h3><div class="choice-wrap">${profs.map(v=>`<button class="choice ${x.prof.includes(v)?'active':''}" onclick="psicoDayToggle('prof',${JSON.stringify(v).replace(/"/g,'&quot;')})">${esc(v)}</button>`).join('')}</div>
+    <h3 style="font-size:15px;margin:16px 0 8px">Atividades da sessão</h3><div class="choice-wrap">${acts.map(v=>`<button class="choice ${x.activities.includes(v)?'active':''}" onclick="psicoDayToggle('activity',${JSON.stringify(v).replace(/"/g,'&quot;')})">${esc(v)}</button>`).join('')}</div>
+    <div class="actions" style="margin-top:17px"><button class="primary" onclick="psicoDayGo()">▶ Estudar agora</button><button class="mini-btn" onclick="plannerHome()">Ver planejamento semanal</button></div>
+  </section>
+  <div class="home-grid">
+    <section class="dash-card"><h2>Progresso da sessão</h2><p class="mut">${count?`${done} de ${count} atividades marcadas como concluídas`:'Selecione atividades no estudo de hoje para acompanhar sua sessão.'}</p><div class="progress-line"><i style="width:${pct}%"></i></div><small class="mut">${pct}% concluído</small>${count?`<div style="margin-top:13px">${x.activities.map(v=>`<label class="today-item" style="cursor:pointer"><input type="checkbox" ${x.done.includes(v)?'checked':''} onchange="psicoDayDone(${JSON.stringify(v).replace(/"/g,'&quot;')})"><span class="today-main"><b>${esc(v)}</b></span></label>`).join('')}</div>`:''}<small class="mut">Marque a conclusão aqui. A integração automática com aulas e quizzes dependerá do registro de progresso dessas atividades.</small></section>
+    <section class="dash-card"><h2>Conteúdos para reforçar</h2><p class="mut">Revise os assuntos em que você teve dificuldade nas atividades e nos quizzes.</p><div class="empty-state" style="padding:15px"><p>As recomendações individuais aparecerão quando os erros e as dificuldades forem registrados por conteúdo.</p><button class="mini-btn" onclick="quizHome()">Fazer revisão</button></div></section>
+    <section class="dash-card"><h2>Planejamento da semana</h2>${routine.length?routine.map(r=>`<div class="today-item"><span class="today-dot"></span><span class="time-pill">${esc(r.time)}</span><div class="today-main"><b>${esc(r.name)}</b><small>${Number(r.min)||30} minutos</small></div></div>`).join(''):'<p class="mut">Nenhum dia de estudo definido ainda.</p>'}<button class="mini-btn" style="margin-top:12px" onclick="plannerHome()">Abrir meu planner</button></section>
+    <section class="dash-card"><h2>Próximas avaliações</h2><p class="mut">Consulte o calendário de avaliações e entregas do bimestre.</p><button class="mini-btn" onclick="comingSoon('Próximas avaliações')">Ver calendário de avaliações</button></section>
+  </div></div>`;
 }
 function plannerHome(){if(!requireAuth())return;
   const p=getStudyProfile();
@@ -1152,4 +1177,6 @@ v55AddProfessorSummary=function(id){v56OriginalAddSummary(id);const section=M.qu
 // Explicit PDF shortcut in Checagem 1 professor selection; no future phases visible.
 const v56OldCkHomeRender=ckHomeRender;
 ckHomeRender=function(){v56OldCkHomeRender();const root=document.getElementById('ck-home');if(!root)return;if(!ckHomeSection){const el=document.createElement('section');el.className='v56-ck-link';el.innerHTML='<h3>📄 Resumos da Checagem 1</h3><p>Conceitos-chave explicados de maneira didática, separados por professor e prontos para imprimir.</p><div class="v56-summary-action">'+[['patricia','Patrícia'],['juliana','Juliana'],['cesar','César'],['mariana','Mariane']].map(([id,name])=>'<button onclick="v56PrintChecagem1(\''+id+'\')">↓ '+name+'</button>').join('')+'</div><p class="v56-note">Aulas futuras não serão adicionadas a estes resumos automaticamente.</p>';root.appendChild(el)}};
+
+document.addEventListener('DOMContentLoaded',()=>{psicoCloudStart().catch(e=>{console.warn('Sincronização',e);authScreen('login')})});
 </script></body></html>
