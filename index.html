@@ -104,7 +104,7 @@ body.auth-locked .auth-wrap{margin:42px auto}
 </div>
 
 <button onclick="plannerHome()">▣ Planner de Estudos</button>
-<button onclick="comingSoon('Cronograma')">◷ Cronograma</button>
+<button onclick="psicoShowSchedule()">◷ Cronograma</button>
 <button onclick="notesHome()">✎ Caderno de Anotações</button>
 <button onclick="comingSoon('Favoritos')">♡ Favoritos</button>
 </div><div class="user-chip" id="userChip"></div><div class="bottom menu"><button onclick="logoutUser()">⇥ Sair</button></div></aside>
@@ -410,7 +410,7 @@ function home(){if(!requireAuth())return;
         <button class="quick" onclick="openBimester(${p.bimester})"><b>▶ Continuar estudando</b><small>Abrir ${p.bimester}º Bimestre</small></button>
         <button class="quick" onclick="plannerHome()"><b>▣ Meu Planner</b><small>Ver minha semana</small></button>
         ${p.bimester===1?`<button class="quick" onclick="quizHome()"><b>✓ Fazer quiz</b><small>Revisar o 1º Bimestre</small></button>`:''}
-        <button class="quick" onclick="comingSoon('Cronograma')"><b>◷ Cronograma</b><small>Provas e entregas</small></button>
+        <button class="quick" onclick="psicoShowSchedule()"><b>◷ Cronograma</b><small>Provas e entregas</small></button>
       </div></section>
       <section class="dash-card"><h2>Meu progresso neste foco</h2><p class="mut">O progresso será construído conforme você concluir jornadas e quizzes do conteúdo selecionado.</p><div class="progress-line"><i style="width:0%"></i></div><small class="mut">Comece uma jornada para registrar seu avanço.</small></section>
       <section class="dash-card"><h2>Meu foco</h2><p class="mut">Sua Home não mistura todos os bimestres. Ela acompanha apenas <b>${p.nucleus} • ${p.bimester}º Bimestre</b> e os professores selecionados.</p><button class="mini-btn" onclick="studySetup()">Ajustar foco</button></section>
@@ -1166,4 +1166,33 @@ function psicoOpenBook(i){
 
 function psicoAdminNav(){const menu=document.querySelector('#side .menu');if(!menu)return;let b=document.getElementById('psico-admin-link');const admin=psicoSession?.user?.email?.toLowerCase()==='mirellacardosomarques@gmail.com';if(admin&&!b){b=document.createElement('button');b.id='psico-admin-link';b.textContent='⚙ Painel administrativo';b.onclick=()=>location.href='admin.html';menu.appendChild(b)}if(b)b.style.display=admin?'':'none'}
 const psicoOldStoreSession=psicoStoreSession;psicoStoreSession=function(s){psicoOldStoreSession(s);psicoAdminNav()};psicoAdminNav();
+
+function psicoShowSchedule(){
+ const events=[
+  ['Checagem 1','21/10/2026','2026-10-21'],
+  ['APG 1','04/11/2026','2026-11-04'],
+  ['Checagem 2','24/11/2026','2026-11-24'],
+  ['APG 2 Global','08/12/2026','2026-12-08']
+ ];
+ const today=new Date();today.setHours(0,0,0,0);
+ const cards=events.map(([name,date,iso])=>{
+  const [y,m,d]=iso.split('-').map(Number);
+  const when=new Date(y,m-1,d);
+  const past=when<today;
+  return `<div class="topic" style="cursor:default"><div><b>${name}</b><div class="mut">${date}</div></div><span class="tag">${past?'Data passada':'Agendado'}</span></div>`;
+ }).join('');
+ M.innerHTML=`<button class="back" onclick="home()">← Início</button><section class="hero"><span class="tag">2º BIMESTRE</span><h1>Cronograma de avaliações</h1><p>Datas das checagens e APGs</p></section>${cards}`;
+ window.scrollTo(0,0);
+}
+
+// Cronograma dinâmico: usa Supabase e preserva as datas anteriores como contingência.
+async function psicoShowSchedule(){
+ const fallback=[{title:'Checagem 1',event_date:'2026-10-21',event_type:'checagem',description:''},{title:'APG 1',event_date:'2026-11-04',event_type:'apg',description:''},{title:'Checagem 2',event_date:'2026-11-24',event_type:'checagem',description:''},{title:'APG 2 Global',event_date:'2026-12-08',event_type:'apg',description:''}];
+ let events=fallback;
+ try {const r=await fetch('https://bkdfgwgimgasxepnqrsw.supabase.co/rest/v1/calendar_events?select=title,event_date,event_type,description&published=eq.true&order=event_date.asc',{headers:{apikey:'sb_publishable_bG7Useu9fYSKwXFvPEc3uA_hoMhK6T8'}});if(r.ok){events=await r.json()}}catch(e){console.warn('Cronograma offline',e)}
+ const clean=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+ const today=new Date();today.setHours(0,0,0,0);
+ const cards=events.map(e=>{const [y,m,d]=e.event_date.split('-').map(Number);const date=new Date(y,m-1,d);const label=String(d).padStart(2,'0')+'/'+String(m).padStart(2,'0')+'/'+y;return `<div class="topic" style="cursor:default"><div><b>${clean(e.title)}</b><div class="mut">${label} · ${clean(e.event_type)}</div>${e.description?`<p class="mut" style="margin-top:8px;white-space:pre-wrap">${clean(e.description)}</p>`:''}</div><span class="tag">${date<today?'Data passada':'Agendado'}</span></div>`}).join('')||'<p class="mut">Nenhuma atividade agendada.</p>';
+ M.innerHTML=`<button class="back" onclick="home()">← Início</button><section class="hero"><span class="tag">2º BIMESTRE</span><h1>Cronograma acadêmico</h1><p>Provas, trabalhos, checagens, APGs e entregas</p></section>${cards}`;window.scrollTo(0,0);
+}
 </script></body></html>
