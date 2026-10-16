@@ -295,6 +295,92 @@ function openBibliographyBook(){
 const AUTH_KEY='psicoUserV1', NOTES_KEY='psicoPreviewNotesV1';
 const PSICO_SESSION='psicoSupabaseSessionV1';
 let psicoSession=null;
+
+// V22 — Sincronização de estados de estudo por usuário autenticado.
+// Não intercepta nem envia tokens, senhas ou dados da autenticação.
+const PS_SYNC_OWNER='psico_sync_owner_v22';
+const PS_SYNC_PREFIXES=['psicoChecagem1_','psicoCkQuiz_','psicoCkEssay_','psicoStudyDone_'];
+const PS_SYNC_EXACT=new Set(['psicoPreviewNotesV1','psico_preview_notes_v2','psico_preview_integrated_week_v1','psico_preview_v4_review','psico_v7_case_review']);
+const psOriginalSet=Storage.prototype.setItem;
+const psOriginalRemove=Storage.prototype.removeItem;
+function psSyncEligible(k){return PS_SYNC_EXACT.has(k)||PS_SYNC_PREFIXES.some(p=>k.startsWith(p));}
+let psSyncApplying=false,psSyncTimer=null,psSyncBusy=false;
+const psSyncPending=new Set();
+function psSyncHeaders(){
+ const token=psicoSession?.access_token;
+ return token?{apikey:SUPABASE_KEY,Authorization:'Bearer '+token,'Content-Type':'application/json'}:null;
+}
+async function psSyncFlush(){
+ if(psSyncBusy||!psicoSession?.user?.id||!psSyncPending.size)return;
+ const owner=psicoSession.user.id,headers=psSyncHeaders();
+ if(!headers)return;
+ psSyncBusy=true;
+ const keys=[...psSyncPending];psSyncPending.clear();
+ try{
+  for(const k of keys){
+   if(psicoSession?.user?.id!==owner)break;
+   const raw=localStorage.getItem(k);
+   let val=null;try{val=JSON.parse(raw)}catch(e){val=raw}
+   const r=await fetch(SUPABASE_URL+'/rest/v1/user_app_state?on_conflict=user_id,state_key',{
+    method:'POST',headers:{...headers,Prefer:'resolution=merge-duplicates,return=minimal'},
+    body:JSON.stringify({user_id:owner,state_key:k,state_value:{data:val}})
+   });
+   if(!r.ok)throw Error('Falha na gravação: '+r.status);
+  }
+ }catch(e){keys.forEach(k=>psSyncPending.add(k));console.warn('Sincronização pendente',e)}
+ finally{psSyncBusy=false;}
+}
+function psSyncQueue(k){
+ if(!psSyncEligible(k)||psSyncApplying||!psicoSession?.user?.id)return;
+ psSyncPending.add(k);
+ clearTimeout(psSyncTimer);psSyncTimer=setTimeout(psSyncFlush,600);
+}
+Storage.prototype.setItem=function(k,v){
+ psOriginalSet.call(this,k,v);
+ if(this===localStorage)psSyncQueue(String(k));
+};
+function psSyncReloadOnce(){
+ const uid=psicoSession?.user?.id;if(!uid)return;
+ const key='psico_sync_hydrated_once_'+uid;
+ if(sessionStorage.getItem(key)!=='yes'){sessionStorage.setItem(key,'yes');location.reload();}
+}
+async function psSyncHydrate(){
+ const user=psicoSession?.user,headers=psSyncHeaders();
+ if(!user?.id||!headers)return;
+ const oldOwner=localStorage.getItem(PS_SYNC_OWNER);
+ // Impede que dados de um usuário anterior apareçam na conta seguinte.
+ if(oldOwner&&oldOwner!==user.id){
+  psSyncApplying=true;
+  for(let i=localStorage.length-1;i>=0;i--){
+   const k=localStorage.key(i);
+   if(psSyncEligible(k))psOriginalRemove.call(localStorage,k);
+  }
+  psSyncApplying=false;
+ }
+ psOriginalSet.call(localStorage,PS_SYNC_OWNER,user.id);
+ try{
+  const r=await fetch(SUPABASE_URL+'/rest/v1/user_app_state?select=state_key,state_value&user_id=eq.'+encodeURIComponent(user.id),{headers});
+  if(!r.ok)throw Error('Leitura indisponível: '+r.status);
+  const rows=await r.json(),remote=new Set();
+  psSyncApplying=true;
+  for(const row of rows){
+   if(!psSyncEligible(row.state_key))continue;
+   remote.add(row.state_key);
+   const val=row.state_value?.data;
+   psOriginalSet.call(localStorage,row.state_key,typeof val==='string'&&!/^[\[{"]/.test(val)?val:JSON.stringify(val));
+  }
+  psSyncApplying=false;
+  // Importa dados locais antigos somente na primeira vinculação a esta conta.
+  if(!oldOwner){
+   for(let i=0;i<localStorage.length;i++){
+    const k=localStorage.key(i);
+    if(psSyncEligible(k)&&!remote.has(k))psSyncPending.add(k);
+   }
+   if(psSyncPending.size)await psSyncFlush();
+  }
+ }catch(e){psSyncApplying=false;console.warn('Não foi possível carregar progresso remoto',e)}
+}
+
 function getUser(){return window.PSICO_PREVIEW_MODE?{id:'preview',name:'Pré-visualização',email:'preview@local.invalid',logged:true}:psicoSession?.user?{id:psicoSession.user.id,name:psicoSession.user.user_metadata?.full_name||psicoSession.user.email?.split('@')[0]||'Estudante',email:psicoSession.user.email,logged:true}:null}
 function setAuthLocked(locked){document.body.classList.toggle('auth-locked',!!locked);if(locked)document.getElementById('side')?.classList.remove('open')}
 function requireAuth(){if(window.PSICO_PREVIEW_MODE)return true;if(!getUser()){authScreen('login');return false}setAuthLocked(false);return true}
@@ -314,12 +400,12 @@ function authScreen(mode='login'){
 function psicoMessage(s){const e=document.getElementById('authMsg');if(e)e.textContent=s}
 async function psicoAuthRequest(endpoint,data,token){if(window.PSICO_PREVIEW_MODE)throw Error('Autenticação desativada na pré-visualização.');const r=await fetch(`${SUPABASE_URL}/auth/v1/${endpoint}`,{method:'POST',headers:{'apikey':SUPABASE_KEY,'Content-Type':'application/json',...(token?{'Authorization':`Bearer ${token}`}:{})},body:JSON.stringify(data)});const x=await r.json().catch(()=>({}));if(!r.ok)throw Error(x.msg||x.error_description||x.message||'Não foi possível concluir.');return x}
 function psicoStoreSession(s){psicoSession=s?.access_token&&s?.user?s:null;if(psicoSession)localStorage.setItem(PSICO_SESSION,JSON.stringify(psicoSession));else localStorage.removeItem(PSICO_SESSION);localStorage.removeItem(AUTH_KEY);updateUserChip()}
-async function createLocalAccount(){const name=document.getElementById('authName').value.trim(),email=document.getElementById('authEmail').value.trim(),password=document.getElementById('authPass').value,p2=document.getElementById('authPass2').value; if(!name||!email||!password){psicoMessage('Preencha nome, e-mail e senha.');return}if(password.length<6){psicoMessage('Use pelo menos 6 caracteres na senha.');return}if(password!==p2){psicoMessage('As senhas não coincidem.');return}const btn=document.getElementById('authSubmit');btn.disabled=true;try{const x=await psicoAuthRequest('signup',{email,password,data:{full_name:name}});if(x.access_token){psicoStoreSession(x);setAuthLocked(false);studySetup()}else psicoMessage('Cadastro recebido. Verifique seu e-mail para confirmar a conta e depois entre.')}catch(e){psicoMessage(e.message)}finally{btn.disabled=false}}
-async function loginLocal(){const email=document.getElementById('authEmail').value.trim(),password=document.getElementById('authPass').value;if(!email||!password){psicoMessage('Informe e-mail e senha.');return}const btn=document.getElementById('authSubmit');btn.disabled=true;try{const x=await psicoAuthRequest('token?grant_type=password',{email,password});psicoStoreSession(x);setAuthLocked(false);home()}catch(e){psicoMessage('Não foi possível entrar. Verifique seus dados e a confirmação do e-mail.')}finally{btn.disabled=false}}
+async function createLocalAccount(){const name=document.getElementById('authName').value.trim(),email=document.getElementById('authEmail').value.trim(),password=document.getElementById('authPass').value,p2=document.getElementById('authPass2').value; if(!name||!email||!password){psicoMessage('Preencha nome, e-mail e senha.');return}if(password.length<6){psicoMessage('Use pelo menos 6 caracteres na senha.');return}if(password!==p2){psicoMessage('As senhas não coincidem.');return}const btn=document.getElementById('authSubmit');btn.disabled=true;try{const x=await psicoAuthRequest('signup',{email,password,data:{full_name:name}});if(x.access_token){psicoStoreSession(x);await psSyncHydrate();setAuthLocked(false);studySetup();psSyncReloadOnce()}else psicoMessage('Cadastro recebido. Verifique seu e-mail para confirmar a conta e depois entre.')}catch(e){psicoMessage(e.message)}finally{btn.disabled=false}}
+async function loginLocal(){const email=document.getElementById('authEmail').value.trim(),password=document.getElementById('authPass').value;if(!email||!password){psicoMessage('Informe e-mail e senha.');return}const btn=document.getElementById('authSubmit');btn.disabled=true;try{const x=await psicoAuthRequest('token?grant_type=password',{email,password});psicoStoreSession(x);await psSyncHydrate();setAuthLocked(false);home();psSyncReloadOnce()}catch(e){psicoMessage('Não foi possível entrar. Verifique seus dados e a confirmação do e-mail.')}finally{btn.disabled=false}}
 async function resetPsicoPassword(){const email=document.getElementById('authEmail').value.trim();if(!email){psicoMessage('Informe seu e-mail.');return}try{await psicoAuthRequest('recover',{email});psicoMessage('Se o e-mail estiver cadastrado, você receberá instruções de recuperação.')}catch(e){psicoMessage('Não foi possível solicitar a recuperação.')}}
 async function logoutUser(){if(window.PSICO_PREVIEW_MODE){home();return}const token=psicoSession?.access_token;psicoStoreSession(null);setAuthLocked(true);authScreen('login');if(token)fetch(`${SUPABASE_URL}/auth/v1/logout`,{method:'POST',headers:{apikey:SUPABASE_KEY,Authorization:`Bearer ${token}`}}).catch(()=>{})}
 function updateUserChip(){const el=document.getElementById('userChip'),u=getUser();if(el)el.textContent=u?'● '+u.name:''}
-async function psicoRestoreSession(){if(window.PSICO_PREVIEW_MODE){setAuthLocked(false);home();return}try{const old=JSON.parse(localStorage.getItem(PSICO_SESSION)||'null');if(old?.refresh_token){const x=await psicoAuthRequest('token?grant_type=refresh_token',{refresh_token:old.refresh_token});psicoStoreSession(x)}}catch(e){psicoStoreSession(null)}if(getUser()){setAuthLocked(false);home()}else authScreen('login')}
+async function psicoRestoreSession(){if(window.PSICO_PREVIEW_MODE){setAuthLocked(false);home();return}try{const old=JSON.parse(localStorage.getItem(PSICO_SESSION)||'null');if(old?.refresh_token){const x=await psicoAuthRequest('token?grant_type=refresh_token',{refresh_token:old.refresh_token});psicoStoreSession(x)}}catch(e){psicoStoreSession(null)}if(getUser()){await psSyncHydrate();setAuthLocked(false);home();psSyncReloadOnce()}else authScreen('login')}
 function getNotes(){try{return JSON.parse(localStorage.getItem(NOTES_KEY)||'[]')}catch(e){return []}}
 function saveNotes(a){localStorage.setItem(NOTES_KEY,JSON.stringify(a))}
 function noteFromStudy(title,concept,meta='Conteúdo de estudo'){
@@ -1203,7 +1289,7 @@ function v55AddProfessorSummary(id){const hero=M.querySelector('.hero');if(!hero
 function v55Escape(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function v55KeyPoints(content){const txt=String(content||'').replace(/<[^>]*>/g,' ').replace(/\r/g,'').trim();const parts=txt.split(/\n+|(?<=[.!?])\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ])/).map(x=>x.trim()).filter(x=>x.length>22);return parts.slice(0,4).map(x=>x.length>310?x.slice(0,307)+'…':x)}
 async function v55LoadLessons(id){if(PROF_IDS[id]){try{const arr=await sbGet(`aulas?select=id,numero,titulo,resumo&bimestre_id=eq.${BIM2_ID}&professor_id=eq.${PROF_IDS[id]}&publicada=eq.true&order=ordem.asc`);if(arr.length){return await Promise.all(arr.map(async a=>{const t=await sbGet(`topicos?select=titulo,conteudo,ordem&aula_id=eq.${a.id}&order=ordem.asc`);return {title:`Aula ${a.numero} — ${a.titulo}`,sections:t.map(x=>[x.titulo,x.conteudo])}}))}}catch(e){console.warn('Resumos: usando cópia local',e)}}return (D2[id]||[]).map((l,i)=>({title:l.title||`Aula ${i+1}`,sections:l.sections||[]}))}
-function v55PrintDocument(id,lessons,subtitle){if(!lessons.length){alert('Ainda não há aulas disponíveis para criar o resumo deste professor.');return}const content=lessons.map((l,i)=>`<section class="lesson"><div class="tag">AULA ${i+1}</div><h2>${v55Escape(l.title)}</h2>${l.sections.map(s=>`<article><h3>${v55Escape(s[0])}</h3><ul>${v55KeyPoints(s[1]).map(p=>`<li>${v55Escape(p)}</li>`).join('')||'<li>Conteúdo não disponível.</li>'}</ul></article>`).join('')}</section>`).join('');const html=`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Resumo — ${v55Escape(V55_NAMES[id])}</title><style>@page{size:A4;margin:17mm}body{font:12px/1.55 Arial,sans-serif;color:#29232f}header{border-bottom:3px solid #7650a1;padding-bottom:13px;margin-bottom:22px}h1{font-size:24px;color:#57327e;margin:8px 0}h2{font-size:17px;color:#57327e;margin:8px 0}h3{font-size:13px;margin:15px 0 5px}.tag{font-size:10px;color:#7650a1;font-weight:bold;letter-spacing:1px}ul{margin:5px 0 10px;padding-left:21px}li{margin-bottom:5px}.lesson{page-break-inside:avoid;margin-bottom:22px}article{break-inside:avoid}footer{margin-top:20px;color:#888;font-size:10px}@media screen{body{max-width:750px;margin:35px auto;padding:0 25px}.print{background:#633c9b;color:#fff;border:0;padding:12px 18px;border-radius:10px;cursor:pointer}}@media print{.print{display:none}}</style></head><body><button class="print" onclick="window.print()">Imprimir / Salvar como PDF</button><header><div class="tag">PSICO EM FORMAÇÃO • 2º BIMESTRE</div><h1>Resumo — Prof. ${v55Escape(V55_NAMES[id])}</h1><div>${v55Escape(subtitle)}</div></header>${content}<footer>Material de revisão elaborado a partir dos tópicos das aulas disponíveis na plataforma. Confira o conteúdo integral para aprofundamento.</footer><div id="previewRibbon" style="position:fixed;bottom:0;left:0;right:0;background:#163c65;color:white;padding:8px 12px;text-align:center;font:600 12px system-ui;z-index:99999">PRÉVIA V5 · Dados locais de teste · Não altera o site oficial</div><style>
+function v55PrintDocument(id,lessons,subtitle){if(!lessons.length){alert('Ainda não há aulas disponíveis para criar o resumo deste professor.');return}const content=lessons.map((l,i)=>`<section class="lesson"><div class="tag">AULA ${i+1}</div><h2>${v55Escape(l.title)}</h2>${l.sections.map(s=>`<article><h3>${v55Escape(s[0])}</h3><ul>${v55KeyPoints(s[1]).map(p=>`<li>${v55Escape(p)}</li>`).join('')||'<li>Conteúdo não disponível.</li>'}</ul></article>`).join('')}</section>`).join('');const html=`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Resumo — ${v55Escape(V55_NAMES[id])}</title><style>@page{size:A4;margin:17mm}body{font:12px/1.55 Arial,sans-serif;color:#29232f}header{border-bottom:3px solid #7650a1;padding-bottom:13px;margin-bottom:22px}h1{font-size:24px;color:#57327e;margin:8px 0}h2{font-size:17px;color:#57327e;margin:8px 0}h3{font-size:13px;margin:15px 0 5px}.tag{font-size:10px;color:#7650a1;font-weight:bold;letter-spacing:1px}ul{margin:5px 0 10px;padding-left:21px}li{margin-bottom:5px}.lesson{page-break-inside:avoid;margin-bottom:22px}article{break-inside:avoid}footer{margin-top:20px;color:#888;font-size:10px}@media screen{body{max-width:750px;margin:35px auto;padding:0 25px}.print{background:#633c9b;color:#fff;border:0;padding:12px 18px;border-radius:10px;cursor:pointer}}@media print{.print{display:none}}</style></head><body><button class="print" onclick="window.print()">Imprimir / Salvar como PDF</button><header><div class="tag">PSICO EM FORMAÇÃO • 2º BIMESTRE</div><h1>Resumo — Prof. ${v55Escape(V55_NAMES[id])}</h1><div>${v55Escape(subtitle)}</div></header>${content}<footer>Material de revisão elaborado a partir dos tópicos das aulas disponíveis na plataforma. Confira o conteúdo integral para aprofundamento.</footer><style>
 .psV10Play{background:#6946a0!important;color:white!important;border-color:#6946a0!important}
 .psV9Ratings button{display:inline-flex;align-items:center;gap:7px}
 .psV9Ratings .psV9Yes span{background:#e5faeb;color:#167b43}
@@ -1232,7 +1318,7 @@ function v56Plain(s){return String(s??'').replace(/<[^>]+>/g,' ').replace(/&nbsp
 function v56BuildPrint(id,sections,subtitle){
  const name=V55_NAMES[id]||id;
  const content=sections.map((x,i)=>`<section class="topic"><h2>${v55Escape(x[0])}</h2><p>${v55Escape(v56Plain(x[1]))}</p>${i===0?`<div class="example"><b>Exemplo prático</b><p>${v55Escape(V56_EXAMPLES[id]||'')}</p></div>`:''}</section>`).join('');
- const html=`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Resumo didático — ${v55Escape(name)}</title><style>@page{size:A4;margin:18mm 17mm}*{box-sizing:border-box}body{font:13px/1.72 Arial,sans-serif;color:#28232d;margin:0}.cover{border-bottom:3px solid #6c479b;padding-bottom:16px;margin-bottom:22px}.eyebrow{font-size:10px;color:#7650a1;font-weight:700;letter-spacing:1.2px}h1{font-size:24px;line-height:1.3;color:#51317d;margin:9px 0 5px}h2{font-size:16px;color:#51317d;margin:22px 0 6px}.topic{break-inside:avoid;page-break-inside:avoid}.topic p{margin:5px 0 10px;text-align:justify}.example{border-left:3px solid #926bb8;background:#f6f1fa;padding:11px 14px;margin:14px 0;break-inside:avoid}.example p{margin:4px 0}.footer{margin-top:25px;border-top:1px solid #e2dce9;padding-top:10px;font-size:10px;color:#7a7280}.print{background:#603b92;color:white;border:0;border-radius:10px;padding:12px 18px;cursor:pointer;margin:15px 0}@media screen{body{max-width:760px;padding:20px;margin:auto}}@media print{.print{display:none}}</style></head><body><button class="print" onclick="window.print()">Imprimir / Salvar como PDF</button><header class="cover"><div class="eyebrow">PSICO EM FORMAÇÃO · 2º BIMESTRE</div><h1>Resumo de estudos — ${v55Escape(name)}</h1><div>${v55Escape(subtitle)}</div></header>${content}<footer class="footer">Psico em Formação · Resumo didático para revisão e impressão.</footer><div id="previewRibbon" style="position:fixed;bottom:0;left:0;right:0;background:#163c65;color:white;padding:8px 12px;text-align:center;font:600 12px system-ui;z-index:99999">PRÉVIA V5 · Dados locais de teste · Não altera o site oficial</div><style>
+ const html=`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Resumo didático — ${v55Escape(name)}</title><style>@page{size:A4;margin:18mm 17mm}*{box-sizing:border-box}body{font:13px/1.72 Arial,sans-serif;color:#28232d;margin:0}.cover{border-bottom:3px solid #6c479b;padding-bottom:16px;margin-bottom:22px}.eyebrow{font-size:10px;color:#7650a1;font-weight:700;letter-spacing:1.2px}h1{font-size:24px;line-height:1.3;color:#51317d;margin:9px 0 5px}h2{font-size:16px;color:#51317d;margin:22px 0 6px}.topic{break-inside:avoid;page-break-inside:avoid}.topic p{margin:5px 0 10px;text-align:justify}.example{border-left:3px solid #926bb8;background:#f6f1fa;padding:11px 14px;margin:14px 0;break-inside:avoid}.example p{margin:4px 0}.footer{margin-top:25px;border-top:1px solid #e2dce9;padding-top:10px;font-size:10px;color:#7a7280}.print{background:#603b92;color:white;border:0;border-radius:10px;padding:12px 18px;cursor:pointer;margin:15px 0}@media screen{body{max-width:760px;padding:20px;margin:auto}}@media print{.print{display:none}}</style></head><body><button class="print" onclick="window.print()">Imprimir / Salvar como PDF</button><header class="cover"><div class="eyebrow">PSICO EM FORMAÇÃO · 2º BIMESTRE</div><h1>Resumo de estudos — ${v55Escape(name)}</h1><div>${v55Escape(subtitle)}</div></header>${content}<footer class="footer">Psico em Formação · Resumo didático para revisão e impressão.</footer><style>
 .psV10Play{background:#6946a0!important;color:white!important;border-color:#6946a0!important}
 .psV9Ratings button{display:inline-flex;align-items:center;gap:7px}
 .psV9Ratings .psV9Yes span{background:#e5faeb;color:#167b43}
@@ -1340,7 +1426,7 @@ async function psicoShowSchedule(){
  const cards=events.map(e=>{const [y,m,d]=e.event_date.split('-').map(Number);const date=new Date(y,m-1,d);const label=String(d).padStart(2,'0')+'/'+String(m).padStart(2,'0')+'/'+y;return `<div class="topic" style="cursor:default"><div><b>${clean(e.title)}</b><div class="mut">${label} · ${clean(e.event_type)}</div>${e.description?`<p class="mut" style="margin-top:8px;white-space:pre-wrap">${clean(e.description)}</p>`:''}</div><span class="tag">${date<today?'Data passada':'Agendado'}</span></div>`}).join('')||'<p class="mut">Nenhuma atividade agendada.</p>';
  M.innerHTML=`<button class="back" onclick="home()">← Início</button><section class="hero"><span class="tag">2º BIMESTRE</span><h1>Cronograma acadêmico</h1><p>Provas, trabalhos, checagens, APGs e entregas</p></section>${cards}`;window.scrollTo(0,0);
 }
-</script><div id="previewRibbon" style="position:fixed;bottom:0;left:0;right:0;background:#163c65;color:white;padding:8px 12px;text-align:center;font:600 12px system-ui;z-index:99999">PRÉVIA V5 · Dados locais de teste · Não altera o site oficial</div><style id="ps-review-style">
+</script><style id="ps-review-style">
 .routine-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.routine-row .ps-day-choices{display:flex;gap:8px;flex:1 1 100%;margin:0 0 10px 0}.ps-day-choices select{min-width:0;flex:1;border:1px solid #d9d1df;border-radius:10px;padding:12px 8px;background:white;color:#292333;font:inherit}.routine-row input[type=time]{width:130px}.routine-row input[type=number]{width:78px}#ps-clock{font-size:clamp(36px,10vw,56px);font-weight:800;text-align:center;padding:15px;font-variant-numeric:tabular-nums}.ps-timer-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}.ps-metric{display:flex;justify-content:space-between;gap:8px;margin:12px 0}.ps-progress{height:10px;background:#eae5ee;border-radius:12px;overflow:hidden}.ps-progress i{display:block;height:100%;background:#7555a6}.ps-today{padding:12px;border-radius:12px;background:#f6f0fa;margin-top:10px}.ps-today button{margin-top:8px}.ps-review-item{padding:10px 0;border-bottom:1px solid #eee}.ps-review-item:last-child{border:0}@media(max-width:480px){.routine-row .ps-day-choices{flex-direction:column}.routine-row input[type=time]{width:120px}}
 </style><script id="ps-review-runtime">
 const PS_DAY_ORDER=['dom','seg','ter','qua','qui','sex','sab'];
