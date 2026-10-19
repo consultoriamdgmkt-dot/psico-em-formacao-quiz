@@ -341,6 +341,27 @@ async function psSyncFlush(){
  }catch(e){keys.forEach(k=>psSyncPending.add(k));console.warn('Sincronização pendente',e)}
  finally{psSyncBusy=false;psSyncShowStatus();if(psSyncPending.size&&psicoSession?.user?.id){clearTimeout(psSyncTimer);psSyncTimer=setTimeout(psSyncFlush,1800)}}
 }
+
+// Registro de ações concluídas, sem registrar apenas a abertura da página como estudo.
+const PS_ACTIVITY_CACHE='psico_activity_days_cache_v1';
+let psActivityPending=new Map(),psActivitySending=false;
+function psLocalDay(){return new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});}
+function psRememberDay(day){if(!day)return;let a=[];try{a=JSON.parse(localStorage.getItem(PS_ACTIVITY_CACHE)||'[]')}catch(e){}if(!a.includes(day)){a.push(day);psOriginalSet.call(localStorage,PS_ACTIVITY_CACHE,JSON.stringify(a));}window.dispatchEvent(new Event('psico:activity'));}
+function psRecordActivity(type,key,content,day){
+ if(!psicoSession?.user?.id)return;
+ const studyDate=day||psLocalDay(),eventKey=String(key).slice(0,450);
+ psActivityPending.set(eventKey,{user_id:psicoSession.user.id,event_key:eventKey,activity_type:type,content_key:String(content||'').slice(0,450),study_date:studyDate,metadata:{source:'psico_web'}});
+ psRememberDay(studyDate);psFlushActivities();
+}
+async function psFlushActivities(){if(psActivitySending||!psActivityPending.size)return;const headers=psSyncHeaders();if(!headers)return;psActivitySending=true;
+ try{const rows=[...psActivityPending.values()];const response=await fetch(SUPABASE_URL+'/rest/v1/study_activity_log?on_conflict=user_id,event_key',{method:'POST',headers:{...headers,Prefer:'resolution=ignore-duplicates,return=minimal'},body:JSON.stringify(rows)});if(!response.ok)throw Error('Atividades: '+response.status);for(const x of rows)psActivityPending.delete(x.event_key)}catch(e){console.warn('Atividades aguardando sincronização',e)}finally{psActivitySending=false;}}
+async function psLoadActivityDays(){const headers=psSyncHeaders(),user=psicoSession?.user;if(!headers||!user?.id)return;
+ try{const r=await fetch(SUPABASE_URL+'/rest/v1/study_activity_log?select=study_date&user_id=eq.'+encodeURIComponent(user.id)+'&limit=5000',{headers});if(!r.ok)throw Error('Leitura atividades: '+r.status);const rows=await r.json();const days=[...new Set(rows.map(x=>x.study_date))];let local=[];try{local=JSON.parse(localStorage.getItem(PS_ACTIVITY_CACHE)||'[]')}catch(e){}psOriginalSet.call(localStorage,PS_ACTIVITY_CACHE,JSON.stringify([...new Set([...local,...days])]));window.dispatchEvent(new Event('psico:activity'));}catch(e){console.warn(e)}}
+function psRecordStoredProgress(k,v){if(!psicoSession?.user?.id||psSyncApplying)return;
+ if(k.startsWith('psicoStudyDone_')&&v!==null&&v!=='false'&&v!=='0')psRecordActivity('lesson_completed','lesson:'+k,k);
+ // Registros de quiz: apenas após gravação de resposta; não contabilizar abertura de tela.
+ if(k.startsWith('psicoCkQuiz_')&&v!==null&&v!=='null'&&v!=='[]'&&v!=='{}')psRecordActivity('quiz_answered','quiz:'+k+':'+String(v).slice(0,80),k);
+}
 function psSyncQueue(k){
  if(!psSyncEligible(k)||psSyncApplying||!psicoSession?.user?.id)return;
  psSyncPending.add(k);psSyncShowStatus();
@@ -348,7 +369,7 @@ function psSyncQueue(k){
 }
 Storage.prototype.setItem=function(k,v){
  psOriginalSet.call(this,k,v);
- if(this===localStorage)psSyncQueue(String(k));
+ if(this===localStorage){psSyncQueue(String(k));psRecordStoredProgress(String(k),String(v));}
 };
 // Exclusões também são sincronizadas como estado nulo; nenhuma conta é apagada.
 Storage.prototype.removeItem=function(k){
@@ -358,11 +379,11 @@ Storage.prototype.removeItem=function(k){
 function psSyncShowStatus(){
  const el=document.getElementById('ps-cloud-sync');if(!el)return;
  if(!psicoSession?.user?.id){el.textContent='Entre na sua conta para sincronizar a rotina';return;}
- el.textContent=psSyncPending.size||psSyncBusy?'Salvando alterações na nuvem…':'Rotina vinculada à sua conta';
+ el.textContent=psSyncPending.size||psSyncBusy?'Salvando alterações na nuvem…':'Conectado à conta. Verifique se as alterações foram sincronizadas.';
 }
-window.psicoSyncNow=async function(){await psSyncFlush();await psSyncHydrate();psSyncShowStatus();};
-document.addEventListener('visibilitychange',()=>{if(!document.hidden&&psicoSession?.user?.id){if(psSyncPending.size)psSyncFlush();else psSyncHydrate();}});
-window.addEventListener('online',()=>{if(psSyncPending.size)psSyncFlush();});
+window.psicoSyncNow=async function(){await psSyncFlush();await psFlushActivities();await psSyncHydrate();await psLoadActivityDays();psSyncShowStatus();};
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&psicoSession?.user?.id){if(psSyncPending.size)psSyncFlush();else psSyncHydrate();psFlushActivities();psLoadActivityDays();}});
+window.addEventListener('online',()=>{if(psSyncPending.size)psSyncFlush();psFlushActivities();});
 function psSyncReloadOnce(){
  const uid=psicoSession?.user?.id;if(!uid)return;
  const key='psico_sync_hydrated_once_'+uid;
@@ -391,8 +412,18 @@ async function psSyncHydrate(){
    if(!psSyncEligible(row.state_key)||psSyncPending.has(row.state_key))continue;
    remote.add(row.state_key);
    const val=row.state_value?.data;
-   if(val===null)psOriginalRemove.call(localStorage,row.state_key);
-   else psOriginalSet.call(localStorage,row.state_key,typeof val==='string'&&!/^[\[{"]/.test(val)?val:JSON.stringify(val));
+   const existing=localStorage.getItem(row.state_key);
+   if(val===null){if(existing===null)psOriginalRemove.call(localStorage,row.state_key);}
+   else if(row.state_key==='psico_preview_integrated_week_v1'){
+     let local=[];try{local=JSON.parse(existing||'[]')}catch(e){}
+     const remotePlan=Array.isArray(val)?val:[];
+     const idOf=x=>x.id||[x.date,x.prof,x.lessonId,x.lessonLabel,x.activity].join('|');
+     const merged=new Map();for(const x of remotePlan)merged.set(idOf(x),x);
+     for(const x of local){const id=idOf(x),prior=merged.get(id);if(!prior||x.done&&!prior.done)merged.set(id,x);}
+     const combined=[...merged.values()];psOriginalSet.call(localStorage,row.state_key,JSON.stringify(combined));
+     if(JSON.stringify(combined)!==JSON.stringify(remotePlan))psSyncPending.add(row.state_key);
+   }else if(existing===null){psOriginalSet.call(localStorage,row.state_key,typeof val==='string'&&!/^[\[{"]/.test(val)?val:JSON.stringify(val));}
+   else if(existing!==JSON.stringify(val)&&existing!==String(val))psSyncPending.add(row.state_key);
   }
   psSyncApplying=false;
   // Importa dados locais antigos somente na primeira vinculação a esta conta.
@@ -403,6 +434,9 @@ async function psSyncHydrate(){
    }
    if(psSyncPending.size)await psSyncFlush();
   }
+  if(psSyncPending.size)await psSyncFlush();
+  await psLoadActivityDays();
+  window.dispatchEvent(new Event('psico:plan-updated'));
  }catch(e){psSyncApplying=false;console.warn('Não foi possível carregar progresso remoto',e)}
 }
 
@@ -1496,7 +1530,7 @@ const dateKey=(d=new Date())=>`${d.getFullYear()}-${String(d.getMonth()+1).padSt
 const dateForDay=day=>{let d=new Date();d.setDate(d.getDate()+(days.indexOf(day)-d.getDay()+7)%7);return dateKey(d)};
 // Converte agendamentos antigos em compromissos de uma data concreta sem excluir histórico.
 let migrated=false;plan.forEach(x=>{if(!x.date){x.date=dateForDay(x.day||days[new Date().getDay()]);migrated=true}});
-const save=()=>localStorage.setItem(KEY,JSON.stringify(plan));if(migrated)save();
+const save=()=>{localStorage.setItem(KEY,JSON.stringify(plan));window.dispatchEvent(new Event('psico:plan-updated'));};if(migrated)save();
 const ordered=()=>plan.map((x,i)=>({...x,_index:i})).sort((a,b)=>a.date.localeCompare(b.date)||a._index-b._index);
 const progress=items=>({done:items.filter(x=>x.done).length,total:items.length,minutes:items.reduce((n,x)=>n+(Number(x.min)||0),0)});
 async function lessons(prof){if(lessonMap[prof])return lessonMap[prof];let items=[];try{if(typeof sbGet==='function'&&PROF_IDS?.[prof]){let rows=await sbGet(`aulas?select=id,numero,titulo,resumo&bimestre_id=eq.${BIM2_ID}&professor_id=eq.${PROF_IDS[prof]}&publicada=eq.true&order=ordem.asc`);items=rows.map(a=>({id:a.id,label:`Aula ${a.numero} — ${a.titulo}`,source:'db'}));}}catch(e){}{let local=typeof localSecondLessons==='function'?localSecondLessons(prof):[];if(local.length)items=[];for(let i=0;i<local.length;i++){let l=local[i],number=(l.title.match(/Aula\s*(\d+)/i)||[])[1];if(!items.some(x=>number&&new RegExp('^Aula\\s*'+number+'\\b','i').test(x.label)))items.push({id:String(i),label:l.title,source:'local'});}items.sort((a,b)=>Number((a.label.match(/Aula\s*(\d+)/i)||[])[1]||99)-Number((b.label.match(/Aula\s*(\d+)/i)||[])[1]||99));}lessonMap[prof]=items;return items;}
@@ -1508,7 +1542,7 @@ let psWeekOffset=0,psSelectedDate=dateKey();
 const psParse=d=>new Date(d+'T12:00:00');
 const psWeekStart=(d)=>{let x=psParse(d);x.setDate(x.getDate()-x.getDay());return x};
 const psShift=(d,n)=>{let x=psParse(d);x.setDate(x.getDate()+n);return dateKey(x)};
-function psStudied(d){return plan.some(x=>x.done&&(x.completedAt||x.date)===d)}
+function psStudied(d){let a=[];try{a=JSON.parse(localStorage.getItem(PS_ACTIVITY_CACHE)||'[]')}catch(e){}return a.includes(d)||plan.some(x=>x.done&&(x.completedAt||x.date)===d)}
 function psWeekHtml(){const today=dateKey(),first=psWeekStart(psShift(today,psWeekOffset*7));const start=dateKey(first),end=psShift(start,6);
 let cells=Array.from({length:7},(_,i)=>{const d=psShift(start,i),isPast=d<today,studied=psStudied(d),n=plan.filter(x=>x.date===d).length;return `<button type="button" class="psWeekDay ${studied?'psGreen':isPast?'psRed':'psNeutral'} ${d===psSelectedDate?'psSelected':''}" onclick="psChooseDay('${d}')"><small>${days[i].slice(0,3)}</small><b>${Number(d.slice(-2))}</b><span>${studied?'✓':isPast?'×':n?'•':'·'}</span></button>`}).join('');return `<div class="psWeekPanel"><div class="psWeekNav"><button onclick="psMoveWeek(-1)" type="button">‹</button><strong>${psParse(start).toLocaleDateString('pt-BR',{day:'2-digit',month:'short'})} a ${psParse(end).toLocaleDateString('pt-BR',{day:'2-digit',month:'short',year:'numeric'})}</strong><button onclick="psMoveWeek(1)" type="button">›</button></div><div class="psWeekGrid">${cells}</div><div class="psLegend"><span>🟢 Estudou</span><span>🔴 Não estudou</span><span>⚪ Em aberto</span></div><p class="psTiny">Dia selecionado: <b>${psParse(psSelectedDate).toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long'})}</b></p></div>`}
 window.psMoveWeek=n=>{psWeekOffset+=n;psSelectedDate=dateKey(psWeekStart(psShift(dateKey(),psWeekOffset*7)));psRefreshWeek()};
@@ -1525,23 +1559,25 @@ function overview(){
  ${groups.length?groups.map(g=>`<div class="psBlock"><b>${esc(names[g.prof]||g.prof)}</b><br><span class="psTiny">${esc(g.lessonLabel)} · ${g.items.filter(x=>x.done).length}/${g.items.length} etapas</span></div>`).join(''):'<p>Você ainda não planejou estudos para hoje.</p>'}
  <div class="psActions"><button class="psMain" onclick="psDemoStart()">▶ Iniciar / continuar</button><button onclick="psDemoPlanner()">✎ Planejar semana</button></div></section>
  <section class="card"><h2>Próximas avaliações e trabalhos</h2>${next.length?next.map(e=>`<div class="psBlock"><b>${esc(e[0])}</b><br><span class="psTiny">${e[1]}</span></div>`).join(''):'<p class="psTiny">Nenhuma avaliação futura encontrada neste cronograma.</p>'}<div class="psActions"><button onclick="psicoShowSchedule()">Ver cronograma completo →</button></div></section>
- <section class="card"><h2>Meu progresso</h2><p><b>${items.length?Math.round(done/items.length*100):0}%</b> da rotina de hoje · ${done}/${items.length} atividades concluídas</p><div class="bar"><i style="width:${items.length?done/items.length*100:0}%"></i></div><p class="psTiny">Progresso das atividades propostas para esta data. Salvo neste navegador; não sincronizado com o Supabase.</p>${items.map(x=>`<p class="psTiny">${esc(names[x.prof])} · ${esc(x.lessonLabel)} · ${esc(x.activity)}: ${x.done?'Concluído':'Pendente'}</p>`).join('')}<p class="psTiny">Total do planejamento: ${progress(plan).done}/${progress(plan).total} atividades concluídas, ${progress(plan).minutes} minutos propostos.</p></section>
+ <section class="card"><h2>Meu progresso</h2><p><b>${items.length?Math.round(done/items.length*100):0}%</b> da rotina de hoje · ${done}/${items.length} atividades concluídas</p><div class="bar"><i style="width:${items.length?done/items.length*100:0}%"></i></div><p class="psTiny">Progresso das atividades propostas para esta data. Atividades sincronizadas com a conta quando há conexão.</p>${items.map(x=>`<p class="psTiny">${esc(names[x.prof])} · ${esc(x.lessonLabel)} · ${esc(x.activity)}: ${x.done?'Concluído':'Pendente'}</p>`).join('')}<p class="psTiny">Total do planejamento: ${progress(plan).done}/${progress(plan).total} atividades concluídas, ${progress(plan).minutes} minutos propostos.</p></section>
  <section class="card"><h2>Conteúdos para reforçar</h2><p class="psTiny">As dificuldades aparecerão aqui quando os resultados dos quizzes, flashcards e autoavaliações forem vinculados ao progresso do estudante. Esta prévia não inventa resultados.</p></section>`
 }
 window.psRoutineHomeHtml=function(){
  const today=dateKey(),todays=ordered().filter(x=>x.date===today),finished=todays.filter(x=>x.done).length;
  return `<div class="psHomeCalendar">${psWeekHtml()}</div><p class="psTiny">Hoje: ${finished} de ${todays.length} atividade(s) concluída(s).</p>${todays.length?todays.map(x=>`<div class="psBlock"><b>${esc(names[x.prof]||x.prof)} · ${esc(x.lessonLabel)}</b><p class="psTiny">${esc(x.activity)} · ${x.min} minutos · ${x.done?'Concluída':'Pendente'}</p></div>`).join(''):'<p class="psTiny">Nenhuma atividade planejada para hoje. Escolha uma data para agendar.</p>'}`;
 };
+window.addEventListener('psico:plan-updated',()=>{try{plan=JSON.parse(localStorage.getItem(KEY)||'[]')}catch(e){}if(document.getElementById('psWeekHost')){const host=document.getElementById('psWeekHost');host.innerHTML=psWeekHtml();drawPlan();}});
+window.addEventListener('psico:activity',()=>{if(document.getElementById('psWeekHost'))document.getElementById('psWeekHost').innerHTML=psWeekHtml();});
 window.psDemoHome=function(){view='home';home();};
 window.psDemoPlanner=async function(){view='planner';show(`<section class="hero"><h1>Planejamento por data</h1><div id="psWeekHost">${psWeekHtml()}</div><p>Escolha a data de cada estudo. Alterações e conclusões serão refletidas imediatamente no planejamento.</p></section><section class="card"><div class="psRow"><label>Data do estudo<input id="psDate" type="date" value="${psSelectedDate}" onchange="psSelectedDate=this.value;psWeekOffset=Math.round((psWeekStart(psSelectedDate)-psWeekStart(dateKey()))/604800000);psRefreshWeek()"></label><label>Professor<select id="psProf" onchange="psDemoFillLessons()">${Object.keys(names).map(p=>`<option value="${p}">${names[p]}</option>`).join('')}</select></label></div><div class="psRow"><label>Aula cadastrada<select id="psLesson"><option>Carregando...</option></select></label><label>Tempo (minutos)<input id="psMin" type="number" min="5" max="240" value="30"></label></div><p class="psTiny">Escolha uma ou mais atividades. Cada atividade entra na sequência do dia e pode ser concluída separadamente.</p><div>${['Leitura','Estudo de caso','Quiz','Flashcards'].map((a,i)=>`<label class="psCheck"><input type="checkbox" class="psAct" value="${a}" ${i===0?'checked':''}> ${a}</label>`).join('')}</div><div class="psActions"><button class="psMain" onclick="psDemoAdd()">+ Adicionar ao dia</button><button onclick="psDemoHome()">✓ Concluir planejamento e voltar</button></div><p id="psWarn" class="psTiny"></p></section><section class="card"><h2>Atividades planejadas</h2><p class="psTiny">Você pode adicionar quantos blocos desejar ao mesmo dia, inclusive professores diferentes.</p><div id="psPlanList"></div><p id="ps-cloud-sync" class="psTiny" role="status">Verificando sincronização…</p><button type="button" class="mini-btn" onclick="psicoSyncNow()">↻ Sincronizar agora</button></section>`);await window.psDemoFillLessons();drawPlan();psSyncShowStatus();};
 window.psDemoFillLessons=async function(){const p=document.getElementById('psProf')?.value,s=document.getElementById('psLesson');if(!s)return;s.innerHTML='<option>Consultando aulas...</option>';const l=await lessons(p);if(!document.getElementById('psLesson')||document.getElementById('psProf').value!==p)return;s.innerHTML=l.length?l.map((x,i)=>`<option value="${i}">${esc(x.label)}</option>`).join(''):'<option value="">Nenhuma aula publicada</option>';};
-window.psDemoAdd=async function(){let p=document.getElementById('psProf').value,ls=await lessons(p),idx=document.getElementById('psLesson').value,l=ls[Number(idx)],acts=[...document.querySelectorAll('.psAct:checked')].map(x=>x.value),min=Number(document.getElementById('psMin').value),warn=document.getElementById('psWarn');if(!l||!acts.length||!min||min<5){warn.textContent='Selecione uma aula existente, ao menos uma atividade e um tempo válido.';return}acts.forEach(a=>plan.push({date:document.getElementById('psDate').value,prof:p,lessonId:l.id,lessonLabel:l.label,source:l.source,activity:a,min:Math.round(min/acts.length)||1,done:false}));save();psRefreshWeek();warn.innerHTML='✓ Bloco adicionado. Escolha outra aula ou professor e clique em Adicionar outro bloco.';};
+window.psDemoAdd=async function(){let p=document.getElementById('psProf').value,ls=await lessons(p),idx=document.getElementById('psLesson').value,l=ls[Number(idx)],acts=[...document.querySelectorAll('.psAct:checked')].map(x=>x.value),min=Number(document.getElementById('psMin').value),warn=document.getElementById('psWarn');if(!l||!acts.length||!min||min<5){warn.textContent='Selecione uma aula existente, ao menos uma atividade e um tempo válido.';return}acts.forEach(a=>plan.push({id:(crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random()),date:document.getElementById('psDate').value,prof:p,lessonId:l.id,lessonLabel:l.label,source:l.source,activity:a,min:Math.round(min/acts.length)||1,done:false}));save();psRefreshWeek();warn.innerHTML='✓ Bloco adicionado. Escolha outra aula ou professor e clique em Adicionar outro bloco.';};
 function drawPlan(){let e=document.getElementById('psPlanList');if(!e)return;
  const list=ordered().filter(x=>x.date===psSelectedDate),dates=[...new Set(list.map(x=>x.date))];
  e.innerHTML=dates.map(d=>{const arr=list.filter(x=>x.date===d),st=progress(arr);
  return `<h3>${d.split('-').reverse().join('/')} · ${st.done}/${st.total} concluídas</h3><div class="bar"><i style="width:${st.total?100*st.done/st.total:0}%"></i></div>${arr.map(x=>`<div class="psBlock"><b>${esc(names[x.prof]||x.prof)} · ${esc(x.lessonLabel)}</b><br>${esc(x.activity)} · ${x.min} min · <strong>${x.done?'Concluído':'Pendente'}</strong><div class="psActions"><button onclick="psDemoMark(${x._index})">${x.done?'↶ Reabrir':'✓ Concluir'}</button><button onclick="psDemoRemove(${x._index})">Excluir</button></div></div>`).join('')}`}).join('')||'<p class="psTiny">Nenhuma atividade agendada para esta data. Você pode selecionar professor, aula e atividades acima.</p>';
 }
-window.psDemoMark=i=>{if(!plan[i])return;plan[i].done=!plan[i].done;plan[i].completedAt=plan[i].done?dateKey():null;save();psRefreshWeek()};
+window.psDemoMark=i=>{if(!plan[i])return;plan[i].done=!plan[i].done;plan[i].completedAt=plan[i].done?dateKey():null;if(plan[i].done)psRecordActivity('study_task_completed','task:'+String(plan[i].id||[plan[i].date,plan[i].prof,plan[i].lessonId,plan[i].activity,i].join('|'))+':'+plan[i].completedAt,plan[i].lessonId,plan[i].completedAt);save();psRefreshWeek()};
 window.psDemoRemove=i=>{if(!plan[i])return;plan.splice(i,1);if(active===i)active=-1;else if(active>i)active--;save();psRefreshWeek();mini()};
 window.psDemoStart=()=>{const date=dateKey(),idx=plan.findIndex(x=>x.date===date&&!x.done);if(idx<0){alert('Não há atividades pendentes para hoje. Abra o planejamento para escolher outra data.');return}openTask(idx)};
 function openTask(i){active=i;let x=plan[i];clockMode='focus';clockRemaining=25*60;clockRun=false;clockAt=Date.now();mini();view='lesson';try{if(x.source==='db'&&typeof openSecondLessonDB==='function')openSecondLessonDB(x.prof,x.lessonId);else if(typeof openSecondLessonLocal==='function')openSecondLessonLocal(x.prof,Number(x.lessonId));else throw Error('A função de abertura de aulas não foi encontrada')}catch(err){console.error(err);alert('Não foi possível abrir a aula. Tente acessá-la pelo menu de professores.');window.psDemoHome();return}setTimeout(()=>{const m=main();if(m){m.insertAdjacentHTML('afterbegin',`<section id="psTaskBar" class="card"><b>Rotina · ${esc(names[x.prof])} · ${esc(x.activity)}</b><p class="psTiny">${esc(x.lessonLabel)}. A aula abaixo é a página real da plataforma, não uma cópia fictícia.</p><div class="psActions"><button onclick="psDemoComplete()">✓ Concluir esta atividade</button><button onclick="psDemoHome()">← Voltar à Home</button></div></section>`)}},700)}
