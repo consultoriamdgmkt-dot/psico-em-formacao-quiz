@@ -536,36 +536,12 @@ function saveStudyProfile(p){
  }
 }
 function studySetup(){if(!requireAuth())return;
-  const old=getStudyProfile()||{bimester:2,profs:['Juliana','César','Patrícia','Mariana'],routine:{}};
-  M.innerHTML=`<div class="setup"><button class="back" onclick="home()">← Voltar</button>
-  <section class="hero"><span class="tag">PERSONALIZAR ESTUDOS</span><h1>O que você vai estudar?</h1><p>Escolha o período que está estudando e monte sua rotina. A Home será organizada a partir dessas escolhas.</p></section>
-  <section class="setup-card">
-    <div class="setup-row"><label>Núcleo formativo</label><div class="choice active">Psicologia Organizacional</div></div>
-    <div class="setup-row"><label>Bimestre atual</label><div class="choice-wrap">
-      <button class="choice ${old.bimester===1?'active':''}" data-bim="1" onclick="pickBimester(1)">1º Bimestre</button>
-      <button class="choice ${old.bimester===2?'active':''}" data-bim="2" onclick="pickBimester(2)">2º Bimestre</button>
-    </div></div>
-    <div class="setup-row"><label>Professores que entram na sua rotina</label><div class="choice-wrap" id="profChoices">
-      ${['Juliana','César','Patrícia','Mariana'].map(p=>`<button class="choice ${old.profs.includes(p)?'active':''}" data-prof="${p}" onclick="this.classList.toggle('active')">${p}</button>`).join('')}
-    </div></div>
-    <div class="setup-row"><label>Minha rotina semanal</label>
-      ${Object.entries(dayNames).map(([k,n])=>{let r=old.routine[k]||{};return `<div class="routine-row"><label class="routine-day"><input type="checkbox" data-day="${k}" ${r.on?'checked':''}> ${n}</label><input type="time" data-time="${k}" value="${r.time||'19:00'}"><input type="number" min="10" step="5" data-min="${k}" value="${r.min||30}" title="Minutos"><div class="ps-day-choices"><select data-dayprof="${k}" aria-label="Professor de ${n}"><option value="">Professor</option>${['Juliana','César','Patrícia','Mariana'].map(z=>`<option value="${z}" ${r.prof===z?'selected':''}>${z}</option>`).join('')}</select><select data-daytask="${k}" aria-label="Atividade de ${n}">${['Leitura da aula','Quiz','Estudo de caso','Flashcards','Revisão'].map(z=>`<option ${r.task===z?'selected':''}>${z}</option>`).join('')}</select></div></div>`}).join('')}
-      <p class="mut" style="font-size:12px">O último campo de cada linha é o tempo de estudo em minutos.</p>
-    </div>
-    <button class="primary" style="width:100%" onclick="saveStudySetup()">Salvar e montar minha Home</button>
-  </section></div>`;
+ const old=getStudyProfile()||{bimester:2,profs:['Juliana','César','Patrícia','Mariana'],routine:{}};
+ M.innerHTML=`<div class="setup"><button class="back" onclick="home()">← Voltar</button><section class="hero"><h1>Organizar meus estudos</h1><p>Escolha o bimestre e agende atividades por data.</p></section><section class="setup-card"><div class="setup-row"><label>Núcleo formativo</label><div class="choice active">Psicologia Organizacional</div></div><div class="setup-row"><label>Bimestre atual</label><div class="choice-wrap"><button class="choice ${old.bimester===1?'active':''}" data-bim="1" onclick="pickBimester(1)">1º Bimestre</button><button class="choice ${old.bimester===2?'active':''}" data-bim="2" onclick="pickBimester(2)">2º Bimestre</button></div></div><p class="mut">Professores e várias atividades são escolhidos para cada data no planejamento.</p><button class="primary" style="width:100%" onclick="saveStudySetup()">Salvar bimestre</button><button class="primary" style="width:100%;margin-top:12px" onclick="saveStudySetup();psDemoPlanner()">Abrir planejamento por data</button></section></div>`;
 }
 let setupBimester=2;
 function pickBimester(n){setupBimester=n;document.querySelectorAll('[data-bim]').forEach(b=>b.classList.toggle('active',Number(b.dataset.bim)===n))}
-function saveStudySetup(){
-  const old=getStudyProfile(); if(old) setupBimester=Number(document.querySelector('[data-bim].active')?.dataset.bim||old.bimester||2);
-  else setupBimester=Number(document.querySelector('[data-bim].active')?.dataset.bim||2);
-  const profs=[...document.querySelectorAll('[data-prof].active')].map(x=>x.dataset.prof);
-  const routine={};
-  Object.keys(dayNames).forEach(k=>{routine[k]={on:document.querySelector(`[data-day="${k}"]`).checked,time:document.querySelector(`[data-time="${k}"]`).value,min:Number(document.querySelector(`[data-min="${k}"]`).value||30),prof:document.querySelector(`[data-dayprof="${k}"]`)?.value||"",task:document.querySelector(`[data-daytask="${k}"]`)?.value||"Leitura da aula"}})
-  saveStudyProfile({...old,nucleus:'Psicologia Organizacional',bimester:setupBimester,profs:profs.length?profs:['Juliana','César','Patrícia','Mariana'],routine});
-  home();
-}
+function saveStudySetup(){const old=getStudyProfile()||{};setupBimester=Number(document.querySelector('[data-bim].active')?.dataset.bim||old.bimester||2);saveStudyProfile({...old,nucleus:'Psicologia Organizacional',bimester:setupBimester,profs:old.profs||['Juliana','César','Patrícia','Mariana'],routine:{}});home();}
 function routineItems(p){
   return Object.entries(p.routine||{}).filter(([k,v])=>v.on).map(([k,v])=>({day:k,name:dayNames[k],...v}));
 }
@@ -1829,4 +1805,16 @@ if(typeof oldPlanner==='function')window.psDemoPlanner=async function(){await ol
 </script>
 <style>
 .psWeekPanel{padding:14px 10px;border:1px solid #ded4e9;border-radius:16px;background:#faf8fd;margin:12px 0 20px}.psWeekNav{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}.psWeekNav button{border:1px solid #ded4e9;background:white;border-radius:9px;padding:5px 15px;font-size:24px;color:#65439a}.psWeekNav strong{font-size:14px;text-align:center}.psWeekGrid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}.psWeekDay{min-width:0!important;display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 1px!important;border:1px solid #ddd!important;border-radius:11px!important;background:#f0eef4!important;color:#5d5566!important}.psWeekDay small{font-size:10px}.psWeekDay b{font-size:18px}.psWeekDay span{font-size:15px}.psWeekDay.psGreen{background:#d9f5e3!important;color:#116333!important;border-color:#9ed9af!important}.psWeekDay.psRed{background:#ffe1e3!important;color:#a32835!important;border-color:#e8a2a9!important}.psWeekDay.psSelected{outline:3px solid #7953ac;outline-offset:1px}.psLegend{display:flex;flex-wrap:wrap;justify-content:center;gap:12px;font-size:12px;margin:13px 0 4px}.psWeekPanel .psTiny{margin:10px 0 0;font-size:12px}
-</style></body></html>
+</style><style>
+.psCheck{display:inline-flex!important;align-items:center;gap:8px;margin:6px 8px 6px 0;padding:11px 13px;border:1px solid #c8b7d9;border-radius:12px;background:#fff;color:#28232e!important;font-size:15px;cursor:pointer;min-height:46px}
+.psCheck input[type=checkbox]{appearance:auto!important;-webkit-appearance:checkbox!important;accent-color:#7546aa!important;width:20px!important;height:20px!important;display:inline-block!important;opacity:1!important;position:static!important;pointer-events:auto!important;flex-shrink:0}
+.psCheck:has(input:checked){background:#f0e8f8!important;border-color:#7546aa!important}
+#psWeekHost,#psWeekHost *{color:#28232e!important}
+</style><script>
+(function(){const previous=window.psDemoPlanner;if(typeof previous!=='function')return;
+window.psDemoPlanner=async function(){await previous();const form=document.getElementById('psProf');if(!form)return;const card=form.closest('section');if(!card)return;
+const note=document.createElement('p');note.className='psTiny';note.textContent='Marque várias atividades ao mesmo tempo. Cada atividade será salva separadamente na data selecionada.';card.appendChild(note);
+const btn=document.createElement('button');btn.type='button';btn.className='psMain';btn.textContent='+ Salvar bloco e preparar outro';btn.onclick=async()=>{await window.psDemoAdd();const warn=document.getElementById('psWarn');if(warn&&warn.textContent.includes('Selecione uma aula'))return;document.querySelectorAll('.psAct').forEach((x,i)=>x.checked=i===0);const prof=document.getElementById('psProf');if(prof)prof.focus();if(warn)warn.textContent='Bloco salvo. Escolha outro professor, aula e atividades para acrescentar ao mesmo dia.';};
+const add=[...card.querySelectorAll('button')].find(b=>b.textContent.includes('Salvar este bloco')||b.textContent.includes('Adicionar ao dia'));if(add)add.insertAdjacentElement('afterend',btn);else card.appendChild(btn);
+document.querySelectorAll('button').forEach(b=>{if(b!==btn&&b.textContent.includes('Adicionar outro bloco de estudos'))b.remove()});};})();
+</script></body></html>
