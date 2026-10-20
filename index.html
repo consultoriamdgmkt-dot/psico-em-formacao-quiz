@@ -334,7 +334,7 @@ async function psSyncFlush(){
    if(!r.ok)throw Error('Falha na gravação: '+r.status);
   }
  }catch(e){keys.forEach(k=>psSyncPending.add(k));console.warn('Sincronização pendente',e)}
- finally{psSyncBusy=false;}
+ finally{psSyncBusy=false;window.dispatchEvent(new CustomEvent('psico-sync-state',{detail:{pending:psSyncPending.size}}));}
 }
 function psSyncQueue(k){
  if(!psSyncEligible(k)||psSyncApplying||!psicoSession?.user?.id)return;
@@ -376,8 +376,9 @@ async function psSyncHydrate(){
    psOriginalSet.call(localStorage,row.state_key,typeof val==='string'&&!/^[\[{"]/.test(val)?val:JSON.stringify(val));
   }
   psSyncApplying=false;
+  window.dispatchEvent(new Event('psico-remote-state-ready'));
   // Importa dados locais antigos somente na primeira vinculação a esta conta.
-  if(!oldOwner){
+  if(false && !oldOwner){
    for(let i=0;i<localStorage.length;i++){
     const k=localStorage.key(i);
     if(psSyncEligible(k)&&!remote.has(k))psSyncPending.add(k);
@@ -387,6 +388,9 @@ async function psSyncHydrate(){
  }catch(e){psSyncApplying=false;console.warn('Não foi possível carregar progresso remoto',e)}
 }
 
+
+window.addEventListener('online',()=>{if(psSyncPending.size)psSyncFlush();else psSyncHydrate();});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&psicoSession?.user?.id&&!psSyncPending.size)psSyncHydrate();});
 function getUser(){return window.PSICO_PREVIEW_MODE?{id:'preview',name:'Pré-visualização',email:'preview@local.invalid',logged:true}:psicoSession?.user?{id:psicoSession.user.id,name:psicoSession.user.user_metadata?.full_name||psicoSession.user.email?.split('@')[0]||'Estudante',email:psicoSession.user.email,logged:true}:null}
 function setAuthLocked(locked){document.body.classList.toggle('auth-locked',!!locked);if(locked)document.getElementById('side')?.classList.remove('open')}
 function requireAuth(){if(window.PSICO_PREVIEW_MODE)return true;if(!getUser()){authScreen('login');return false}setAuthLocked(false);return true}
@@ -1452,7 +1456,7 @@ function psTodayKey(){const d=new Date();return 'psicoStudyDone_'+d.getFullYear(
 function psMarkToday(){localStorage.setItem(psTodayKey(),'1');psRenderEvolution()}
 function psRenderEvolution(){const p=getStudyProfile()||{},r=p.routine?.[psStudyDay()]||{},done=localStorage.getItem(psTodayKey())==='1',all=Object.values(p.routine||{}).filter(x=>x.on).length;let total=0,correct=0,misses=[];
 try{for(const prof of ['Patrícia','Juliana','César','Mariana']){const answers=JSON.parse(localStorage.getItem('psicoCkQuiz_'+prof)||'{}');const bank=(typeof CK_QUIZ!=='undefined'?CK_QUIZ[prof]:[])||[];for(const [key,answer] of Object.entries(answers)){const q=bank[Number(key)];if(!q)continue;total++;if(answer===q.correct)correct++;else misses.push({prof,question:q.question||q.case||'Questão para revisar'})}}}catch(e){console.warn(e)}
-const e=document.getElementById('ps-evolution');if(e)e.innerHTML='<div class="ps-metric"><span>Questões respondidas</span><b>'+total+'</b></div><div class="ps-metric"><span>Acertos registrados neste dispositivo</span><b>'+correct+'</b></div><div class="ps-progress"><i style="width:'+(total?Math.round(correct/total*100):0)+'%"></i></div><p class="mut">'+(total?Math.round(correct/total*100)+'% de acertos nas checagens registradas.':'Responda aos quizzes para acompanhar seus acertos.')+'</p><div class="ps-today"><b>Planejado para hoje</b><p>'+(r.on?(r.prof||'Professor não escolhido')+' • '+(r.task||'Leitura da aula')+' • '+r.min+' minutos':'Sem atividade programada para hoje.')+'</p>'+(r.on?'':'<button class="mini-btn" onclick="studySetup()">Planejar hoje</button>')+'</div><p class="mut" style="font-size:12px">Prévia: conclusão e respostas são lidas deste dispositivo; sincronização multidispositivo deve ser validada separadamente.</p>';
+const e=document.getElementById('ps-evolution');if(e)e.innerHTML='<div class="ps-metric"><span>Questões respondidas</span><b>'+total+'</b></div><div class="ps-metric"><span>Acertos registrados na conta (após sincronização)</span><b>'+correct+'</b></div><div class="ps-progress"><i style="width:'+(total?Math.round(correct/total*100):0)+'%"></i></div><p class="mut">'+(total?Math.round(correct/total*100)+'% de acertos nas checagens registradas.':'Responda aos quizzes para acompanhar seus acertos.')+'</p><div class="ps-today"><b>Planejado para hoje</b><p>'+(r.on?(r.prof||'Professor não escolhido')+' • '+(r.task||'Leitura da aula')+' • '+r.min+' minutos':'Sem atividade programada para hoje.')+'</p>'+(r.on?'':'<button class="mini-btn" onclick="studySetup()">Planejar hoje</button>')+'</div><p class="mut" style="font-size:12px">Os resultados são sincronizados com a conta quando houver conexão. Confira o status da sincronização.</p>';
 const t=document.getElementById('ps-reinforce');if(t)t.innerHTML=misses.length?misses.slice(0,6).map(x=>'<div class="ps-review-item"><b>'+psEsc(x.prof)+'</b><p>'+psEsc(x.question)+'</p></div>').join(''):'<p class="mut">Nenhuma questão errada identificada nas checagens registradas neste dispositivo.</p>';
 psClockDraw()}
 function psEsc(x){return String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -1469,7 +1473,11 @@ const KEY='psico_preview_integrated_week_v1';let plan=JSON.parse(localStorage.ge
 const names={juliana:'Juliana',cesar:'César',mariana:'Mariana',patricia:'Patrícia'};
 const days=['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'];
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const save=()=>localStorage.setItem(KEY,JSON.stringify(plan));
+const save=()=>{localStorage.setItem(KEY,JSON.stringify(plan));window.dispatchEvent(new Event('psico-plan-changed'));};
+function refreshPlan(){try{const v=JSON.parse(localStorage.getItem(KEY)||'[]');if(Array.isArray(v))plan=v;}catch(e){console.warn('Planejamento local inválido',e)}}
+window.addEventListener('psico-remote-state-ready',()=>{refreshPlan();if(view==='home')home();else if(view==='planner')drawPlan();});
+window.addEventListener('storage',e=>{if(e.key===KEY){refreshPlan();if(view==='home')home();else if(view==='planner')drawPlan();}});
+
 async function lessons(prof){if(lessonMap[prof])return lessonMap[prof];let items=[];try{if(typeof sbGet==='function'&&PROF_IDS?.[prof]){let rows=await sbGet(`aulas?select=id,numero,titulo,resumo&bimestre_id=eq.${BIM2_ID}&professor_id=eq.${PROF_IDS[prof]}&publicada=eq.true&order=ordem.asc`);items=rows.map(a=>({id:a.id,label:`Aula ${a.numero} — ${a.titulo}`,source:'db'}));}}catch(e){}{let local=typeof localSecondLessons==='function'?localSecondLessons(prof):[];if(local.length)items=[];for(let i=0;i<local.length;i++){let l=local[i],number=(l.title.match(/Aula\s*(\d+)/i)||[])[1];if(!items.some(x=>number&&new RegExp('^Aula\\s*'+number+'\\b','i').test(x.label)))items.push({id:String(i),label:l.title,source:'local'});}items.sort((a,b)=>Number((a.label.match(/Aula\s*(\d+)/i)||[])[1]||99)-Number((b.label.match(/Aula\s*(\d+)/i)||[])[1]||99));}lessonMap[prof]=items;return items;}
 const main=()=>document.getElementById('main')||document.querySelector('main');
 function titleBar(){document.querySelectorAll('header').forEach(h=>{let el=h.querySelector('h1,.brand,.logo,a');if(el&&!el.dataset.psHome){el.style.cursor='pointer';el.title='Voltar para Minha rotina';el.dataset.psHome='1';el.addEventListener('click',e=>{e.preventDefault();window.psDemoHome()})}});}
@@ -1488,8 +1496,8 @@ function overview(){
  <section class="card"><h2>Meu progresso</h2><p><b>${items.length?Math.round(done/items.length*100):0}%</b> da rotina de hoje · ${done}/${items.length} atividades concluídas</p><div class="bar"><i style="width:${items.length?done/items.length*100:0}%"></i></div><p class="psTiny">O detalhamento por atividade aparece aqui; esta prévia não modifica o Supabase.</p>${items.map(x=>`<p class="psTiny">${esc(names[x.prof])} · ${esc(x.activity)}: ${x.done?'Concluído':'Pendente'}</p>`).join('')}</section>
  <section class="card"><h2>Conteúdos para reforçar</h2><p class="psTiny">As dificuldades aparecerão aqui quando os resultados dos quizzes, flashcards e autoavaliações forem vinculados ao progresso do estudante. Esta prévia não inventa resultados.</p></section>`
 }
-window.psDemoHome=function(){view='home';home();};
-window.psDemoPlanner=async function(){view='planner';show(`<section class="hero"><h1>Planejamento da semana</h1><p>Selecione aulas existentes na plataforma, sem criar aulas fictícias.</p></section><section class="card"><div class="psRow"><label>Dia<select id="psDay">${days.map((d,i)=>`<option value="${d}" ${i===new Date().getDay()?'selected':''}>${d}</option>`).join('')}</select></label><label>Professor<select id="psProf" onchange="psDemoFillLessons()">${Object.keys(names).map(p=>`<option value="${p}">${names[p]}</option>`).join('')}</select></label></div><div class="psRow"><label>Aula cadastrada<select id="psLesson"><option>Carregando...</option></select></label><label>Tempo (minutos)<input id="psMin" type="number" min="5" max="240" value="30"></label></div><p class="psTiny">Escolha uma ou mais atividades. Cada atividade entra na sequência do dia e pode ser concluída separadamente.</p><div>${['Leitura','Estudo de caso','Quiz','Flashcards'].map((a,i)=>`<label class="psCheck"><input type="checkbox" class="psAct" value="${a}" ${i===0?'checked':''}> ${a}</label>`).join('')}</div><div class="psActions"><button class="psMain" onclick="psDemoAdd()">+ Adicionar ao dia</button><button onclick="psDemoHome()">✓ Concluir planejamento e voltar</button></div><p id="psWarn" class="psTiny"></p></section><section class="card"><h2>Atividades planejadas</h2><p class="psTiny">Você pode adicionar quantos blocos desejar ao mesmo dia, inclusive professores diferentes.</p><div id="psPlanList"></div></section>`);await window.psDemoFillLessons();drawPlan();};
+window.psDemoHome=function(){refreshPlan();view='home';home();};
+window.psDemoPlanner=async function(){refreshPlan();view='planner';show(`<section class="hero"><h1>Planejamento da semana</h1><p>Selecione aulas existentes na plataforma, sem criar aulas fictícias.</p></section><section class="card"><div class="psRow"><label>Dia<select id="psDay">${days.map((d,i)=>`<option value="${d}" ${i===new Date().getDay()?'selected':''}>${d}</option>`).join('')}</select></label><label>Professor<select id="psProf" onchange="psDemoFillLessons()">${Object.keys(names).map(p=>`<option value="${p}">${names[p]}</option>`).join('')}</select></label></div><div class="psRow"><label>Aula cadastrada<select id="psLesson"><option>Carregando...</option></select></label><label>Tempo (minutos)<input id="psMin" type="number" min="5" max="240" value="30"></label></div><p class="psTiny">Escolha uma ou mais atividades. Cada atividade entra na sequência do dia e pode ser concluída separadamente.</p><div>${['Leitura','Estudo de caso','Quiz','Flashcards'].map((a,i)=>`<label class="psCheck"><input type="checkbox" class="psAct" value="${a}" ${i===0?'checked':''}> ${a}</label>`).join('')}</div><div class="psActions"><button class="psMain" onclick="psDemoAdd()">+ Adicionar ao dia</button><button onclick="psDemoHome()">✓ Concluir planejamento e voltar</button></div><p id="psWarn" class="psTiny"></p></section><section class="card"><h2>Atividades planejadas</h2><p class="psTiny">Você pode adicionar quantos blocos desejar ao mesmo dia, inclusive professores diferentes.</p><div id="psPlanList"></div></section>`);await window.psDemoFillLessons();drawPlan();};
 window.psDemoFillLessons=async function(){const p=document.getElementById('psProf')?.value,s=document.getElementById('psLesson');if(!s)return;s.innerHTML='<option>Consultando aulas...</option>';const l=await lessons(p);if(!document.getElementById('psLesson')||document.getElementById('psProf').value!==p)return;s.innerHTML=l.length?l.map((x,i)=>`<option value="${i}">${esc(x.label)}</option>`).join(''):'<option value="">Nenhuma aula publicada</option>';};
 window.psDemoAdd=async function(){let p=document.getElementById('psProf').value,ls=await lessons(p),idx=document.getElementById('psLesson').value,l=ls[Number(idx)],acts=[...document.querySelectorAll('.psAct:checked')].map(x=>x.value),min=Number(document.getElementById('psMin').value),warn=document.getElementById('psWarn');if(!l||!acts.length||!min||min<5){warn.textContent='Selecione uma aula existente, ao menos uma atividade e um tempo válido.';return}acts.forEach(a=>plan.push({day:document.getElementById('psDay').value,prof:p,lessonId:l.id,lessonLabel:l.label,source:l.source,activity:a,min:Math.round(min/acts.length)||1,done:false}));save();drawPlan();warn.innerHTML='✓ Bloco adicionado. Escolha outra aula ou professor e clique em Adicionar outro bloco.';};
 function drawPlan(){let e=document.getElementById('psPlanList');if(!e)return;e.innerHTML=days.filter(d=>plan.some(x=>x.day===d)).map(d=>`<h3>${d}</h3>${plan.map((x,i)=>x.day===d?`<div class="psBlock"><b>${esc(names[x.prof])} · ${esc(x.lessonLabel)}</b><br>${esc(x.activity)} · ${x.min} min <button style="float:right" onclick="psDemoRemove(${i})">Excluir</button></div>`:'').join('')}`).join('')||'<p class="psTiny">Ainda não há atividades programadas.</p>';}
@@ -1805,4 +1813,15 @@ window.psSaveDateBlock=function(){let date=document.getElementById('psNewDate')?
 window.addEventListener('psico-plan-changed',()=>{let box=document.getElementById('psCurrentWeek');if(box)refresh()});
 })();
 </script>
-</body></html>
+<script>
+(function(){
+const badge=document.createElement('div');badge.id='psSyncStatus';badge.setAttribute('role','status');
+badge.style.cssText='position:fixed;bottom:12px;right:12px;z-index:100000;padding:8px 12px;background:#f3eafa;color:#412a60;border:1px solid #d9c7ec;border-radius:12px;font:12px system-ui;box-shadow:0 2px 10px #0002';
+badge.textContent='Sincronização: aguardando conexão';
+const attach=()=>{if(document.body&&!document.getElementById('psSyncStatus'))document.body.appendChild(badge)};
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',attach);else attach();
+window.addEventListener('psico-remote-state-ready',()=>{badge.textContent='Dados da conta carregados';});
+window.addEventListener('psico-sync-state',e=>{badge.textContent=e.detail.pending?'Sincronização pendente · verifique a conexão':'Alterações enviadas ao Supabase';});
+window.addEventListener('offline',()=>{badge.textContent='Sem internet · alterações pendentes';});
+})();
+</script></body>
