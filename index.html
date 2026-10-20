@@ -1739,4 +1739,70 @@ if(typeof oldPlanner==='function')window.psDemoPlanner=async function(){await ol
  };
 })();
 </script>
+<style>
+.psWeekCard{background:#fff;color:#24212a;border:1px solid #e5ddea;border-radius:20px;padding:20px;margin:12px 0}
+.psWeekNav{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.psWeekNav button,.psDateTask button{border:1px solid #cdbbde;background:#fff;color:#573781;border-radius:10px;padding:9px 12px;cursor:pointer}
+.psWeekDays{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;margin:15px 0}
+.psWeekDay{border:1px solid #ddd5e3;background:#f6f4f8;border-radius:11px;padding:9px 2px;min-width:0;text-align:center;color:#26212c!important;cursor:pointer}
+.psWeekDay strong,.psWeekDay small{display:block;color:inherit!important}.psWeekDay strong{font-size:clamp(14px,2vw,22px)}.psWeekDay small{font-size:12px}
+.psWeekDay[aria-pressed=true]{outline:2px solid #7845ac;outline-offset:1px}
+.psWeekDot{display:block;width:11px;height:11px;border-radius:50%;margin:8px auto 0;background:#a9a6af}
+.psWeekDot.done{background:#16ad68}.psWeekDot.missed{background:#db3451}
+.psWeekLegend{font-size:13px;color:#4c4655;line-height:1.7}
+.psDateTask{padding:12px 0;border-top:1px solid #eee8f2;color:#28232d}
+.psDateTask small{color:#5f5867;display:block;margin:5px 0}
+.psDateTask label{display:inline-flex;align-items:center;gap:8px;cursor:pointer}
+.psDateTask input[type=checkbox],.psMulti input[type=checkbox]{appearance:auto!important;width:18px!important;height:18px!important;opacity:1!important;position:static!important;accent-color:#7649a8!important}
+.psMulti{display:inline-flex;gap:7px;align-items:center;padding:10px;margin:4px;border:1px solid #d8cde3;border-radius:12px;color:#26212c!important;background:#fff}
+.psWeekForm{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:12px 0}
+.psWeekForm label{display:block;font-weight:600;color:#302a36}
+.psWeekForm input,.psWeekForm select{width:100%;max-width:100%;padding:11px;border:1px solid #c9bdcf;border-radius:10px;background:#fff;color:#27212b}
+@media(max-width:620px){.psWeekForm{grid-template-columns:1fr}.psWeekCard{padding:14px}}
+</style>
+<script>
+(function(){
+'use strict';
+const KEY='psico_preview_integrated_week_v1';
+const names={juliana:'Juliana',cesar:'César',patricia:'Patrícia',mariana:'Mariana'};
+const acts=['Leitura','Estudo de caso','Quiz','Flashcards'];
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const dateStr=d=>[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
+const parse=s=>new Date(s+'T12:00:00');
+const today=()=>dateStr(new Date());
+const startOfWeek=d=>{let x=new Date(d);x.setHours(12,0,0,0);x.setDate(x.getDate()-x.getDay());return x};
+let selected=today(),offset=0;
+function read(){try{let p=JSON.parse(localStorage.getItem(KEY)||'[]');return Array.isArray(p)?p:[]}catch(e){return []}}
+function write(p){localStorage.setItem(KEY,JSON.stringify(p));window.dispatchEvent(new Event('psico-plan-changed'))}
+function itemsFor(date){return read().filter(x=>x.date===date)}
+function status(date){let tasks=itemsFor(date);if(tasks.some(x=>x.done))return 'done';if(date<today())return 'missed';return 'open'}
+function weekHtml(){let base=startOfWeek(new Date());base.setDate(base.getDate()+offset*7);let last=new Date(base);last.setDate(last.getDate()+6);
+ const days=Array.from({length:7},(_,i)=>{let d=new Date(base);d.setDate(d.getDate()+i);let key=dateStr(d),st=status(key);return `<button type="button" class="psWeekDay" aria-pressed="${key===selected}" onclick="psChooseDate('${key}')"><small>${['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][i]}</small><strong>${d.getDate()}</strong><span class="psWeekDot ${st}" aria-label="${st==='done'?'Estudou':st==='missed'?'Não estudou':'Em aberto'}"></span></button>`}).join('');
+ return `<div class="psWeekCard" id="psCurrentWeek"><div class="psWeekNav"><button type="button" onclick="psChangeWeek(-1)">‹ Semana anterior</button><b>${base.toLocaleDateString('pt-BR',{day:'2-digit',month:'short'})} a ${last.toLocaleDateString('pt-BR',{day:'2-digit',month:'short',year:'numeric'})}</b><button type="button" onclick="psChangeWeek(1)">Próxima ›</button></div><div class="psWeekDays">${days}</div><p class="psWeekLegend">🟢 Estudou &nbsp; 🔴 Dia encerrado sem estudo &nbsp; ⚪ Em aberto</p>${tasksHtml(selected)}<button class="mini-btn" type="button" onclick="psDemoPlanner()">+ Agendar por data</button></div>`;
+}
+function tasksHtml(date){let arr=itemsFor(date);return `<h3 style="margin:12px 0">${parse(date).toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long'})}</h3>${arr.length?arr.map(x=>`<div class="psDateTask"><b>${esc(names[x.prof]||x.prof)} · ${esc(x.lessonLabel)}</b><small>${esc(x.activity)} · ${Number(x.min)||30} min</small><label><input type="checkbox" ${x.done?'checked':''} onchange="psToggleDateTask('${esc(x.id)}',this.checked)"> Concluída</label> <button type="button" onclick="psRemoveDateTask('${esc(x.id)}')">Excluir</button></div>`).join(''):'<p style="color:#625c68">Nenhuma atividade agendada nesta data.</p>'}`}
+function refresh(){let box=document.getElementById('psCurrentWeek');if(box)box.outerHTML=weekHtml();let list=document.getElementById('psDateList');if(list)list.innerHTML=tasksHtml(selected)}
+window.psChooseDate=d=>{selected=d;refresh();let f=document.getElementById('psNewDate');if(f)f.value=d};
+window.psChangeWeek=n=>{offset+=n;let d=startOfWeek(new Date());d.setDate(d.getDate()+offset*7);selected=dateStr(d);refresh()};
+window.psToggleDateTask=(id,done)=>{let p=read(),x=p.find(t=>t.id===id);if(x){x.done=done;write(p);refresh()}};
+window.psRemoveDateTask=id=>{write(read().filter(x=>x.id!==id));refresh()};
+const originalHome=window.home;
+if(typeof originalHome==='function')window.home=function(){originalHome.apply(this,arguments);let card=document.querySelector('.home-grid .dash-card');if(card&&card.querySelector('h2')?.textContent.trim()==='Minha rotina'){
+ card.innerHTML='<h2>Minha rotina semanal</h2>'+weekHtml();
+ }};
+window.psDemoPlanner=async function(){let main=document.getElementById('main');if(!main)return;main.innerHTML=`<section class="hero"><h1>Montar minha rotina semanal</h1><p>Agende por data, escolha o professor e a aula e marque várias atividades no mesmo dia.</p></section><section class="psWeekCard">${weekHtml()}</section><section class="psWeekCard"><h2>Adicionar bloco de estudos</h2><div class="psWeekForm"><label>Data<input type="date" id="psNewDate" value="${selected}"></label><label>Professor<select id="psNewProf" onchange="psLoadDateLessons()">${Object.keys(names).map(k=>`<option value="${k}">${names[k]}</option>`).join('')}</select></label><label>Aula<select id="psNewLesson"><option value="">Carregando aulas...</option></select></label><label>Tempo total (minutos)<input id="psNewMin" type="number" min="5" max="240" value="60"></label></div><p>Atividades (marque uma ou mais):</p>${acts.map((a,i)=>`<label class="psMulti"><input type="checkbox" class="psNewAct" value="${a}" ${i===0?'checked':''}>${a}</label>`).join('')}<p id="psDateMsg" role="status"></p><button class="primary" type="button" onclick="psSaveDateBlock()">+ Salvar bloco e adicionar outro</button> <button class="mini-btn" type="button" onclick="psDemoHome()">Concluir planejamento</button></section><section class="psWeekCard"><h2>Atividades agendadas</h2><div id="psDateList">${tasksHtml(selected)}</div></section>`;await window.psLoadDateLessons();};
+window.psLoadDateLessons=async function(){let p=document.getElementById('psNewProf')?.value,select=document.getElementById('psNewLesson');if(!p||!select)return;let data=[];
+ try{if(typeof localSecondLessons==='function')data=localSecondLessons(p).map((x,i)=>({id:String(i),label:x.title,source:'local'}));}catch(e){}
+ if(!data.length){try{if(typeof sbGet==='function'&&typeof PROF_IDS!=='undefined'&&typeof BIM2_ID!=='undefined'){let rows=await sbGet(`aulas?select=id,numero,titulo&bimestre_id=eq.${BIM2_ID}&professor_id=eq.${PROF_IDS[p]}&publicada=eq.true&order=ordem.asc`);data=rows.map(x=>({id:x.id,label:`Aula ${x.numero} — ${x.titulo}`,source:'db'}));}}catch(e){}}
+ if(document.getElementById('psNewProf')?.value!==p)return;select.innerHTML=data.length?data.map(x=>`<option value="${esc(x.id)}" data-source="${esc(x.source)}">${esc(x.label)}</option>`).join(''):'<option value="">Nenhuma aula disponível</option>';
+};
+window.psSaveDateBlock=function(){let date=document.getElementById('psNewDate')?.value,prof=document.getElementById('psNewProf')?.value,lesson=document.getElementById('psNewLesson'),min=Number(document.getElementById('psNewMin')?.value),selectedActs=[...document.querySelectorAll('.psNewAct:checked')].map(x=>x.value),msg=document.getElementById('psDateMsg');
+ if(!date||!prof||!lesson?.value||!selectedActs.length||!Number.isFinite(min)||min<5){if(msg)msg.textContent='Informe data, aula, tempo válido e ao menos uma atividade.';return}
+ let plan=read(),label=lesson.selectedOptions[0]?.textContent||'',source=lesson.selectedOptions[0]?.dataset.source||'local';
+ selectedActs.forEach((activity,i)=>plan.push({id:'task_'+Date.now()+'_'+i+'_'+Math.random().toString(36).slice(2,8),date,day:parse(date).toLocaleDateString('pt-BR',{weekday:'long'}),prof,lessonId:lesson.value,lessonLabel:label,source,activity,min:Math.round(min/selectedActs.length)||1,done:false}));
+ write(plan);selected=date;let start=startOfWeek(parse(date)),now=startOfWeek(new Date());offset=Math.round((start-now)/604800000);refresh();if(msg)msg.textContent=`${selectedActs.length} atividade(s) adicionada(s) em ${parse(date).toLocaleDateString('pt-BR')}. Você pode escolher outra aula e salvar mais um bloco.`;
+};
+window.addEventListener('psico-plan-changed',()=>{let box=document.getElementById('psCurrentWeek');if(box)refresh()});
+})();
+</script>
 </body></html>
