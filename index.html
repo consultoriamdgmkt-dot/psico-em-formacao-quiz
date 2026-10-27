@@ -96,7 +96,21 @@ body.auth-locked .auth-wrap{margin:42px auto}
 .v69-idea p,.psico-idea p{color:#38214f!important;margin:0!important;line-height:1.65!important}
 .v69-idea-icon{flex-shrink:0;font-size:1.35rem}
 </style>
-</head><body>
+<style id="psico-mobile-stability-v1">
+html{max-width:100%;overflow-x:clip}
+body{max-width:100%;overflow-x:clip}
+.main,main,.lesson,.lesson-card,.card,.body,.quizhub,.quizrun{min-width:0;max-width:100%}
+.body,.lesson,.card{overflow-wrap:anywhere}
+table{max-width:100%}
+@media(max-width:760px){
+ .main{width:100%;min-width:0}
+ .mobile{width:100%;min-width:0}
+ .lesson,.lesson-card,.card,.quizrun{min-width:0}
+ .body table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
+ .body img,.body svg,.body iframe{max-width:100%;height:auto}
+ .step-jump{max-width:100%;overflow-x:auto}
+}
+</style></head><body>
 <div class="mobile"><b role="button" tabindex="0" title="Voltar para Minha rotina" onclick="psDemoHome()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();psDemoHome()}" style="cursor:pointer">🧠 Psico em Formação</b><button onclick="document.getElementById('side').classList.toggle('open')">☰</button></div>
 <aside class="side" id="side"><div class="logo" role="button" tabindex="0" title="Voltar para Minha rotina" onclick="document.getElementById('side').classList.remove('open');psDemoHome()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();psDemoHome()}" style="cursor:pointer"><div class="brain">🧠</div><div class="brand">Psico em Formação<small>APRENDER • PRATICAR • EVOLUIR</small></div></div><div class="menu">
 <button class="active" onclick="home()">⌂ Início</button>
@@ -354,7 +368,7 @@ async function psSyncFlush(){
    if(!r.ok)throw Error('Falha na gravação: '+r.status);
   }
  }catch(e){keys.forEach(k=>psSyncPending.add(k));console.warn('Sincronização pendente',e)}
- finally{psSyncBusy=false;window.dispatchEvent(new CustomEvent('psico-sync-state',{detail:{pending:psSyncPending.size}}));}
+ finally{psSyncBusy=false;window.dispatchEvent(new CustomEvent('psico-sync-state',{detail:{pending:psSyncPending.size}}));if(psSyncPending.size&&navigator.onLine){clearTimeout(psSyncTimer);psSyncTimer=setTimeout(psSyncFlush,2500);}}
 }
 function psSyncQueue(k){
  if(!psSyncEligible(k)||psSyncApplying||!psicoSession?.user?.id)return;
@@ -409,8 +423,15 @@ async function psSyncHydrate(){
 }
 
 
-window.addEventListener('online',()=>{if(psSyncPending.size)psSyncFlush();else psSyncHydrate();});
-document.addEventListener('visibilitychange',()=>{if(!document.hidden&&psicoSession?.user?.id&&!psSyncPending.size)psSyncHydrate();});
+// Retomar o aplicativo não deve substituir anotações locais por um estado remoto mais antigo.
+window.addEventListener('online',()=>{if(psSyncPending.size)psSyncFlush();});
+document.addEventListener('visibilitychange',()=>{
+ if(!psicoSession?.user?.id)return;
+ if(document.hidden){clearTimeout(psSyncTimer);if(psSyncPending.size)psSyncFlush();}
+ else if(psSyncPending.size){psSyncFlush();}
+});
+window.addEventListener('pageshow',()=>{if(psicoSession?.user?.id&&psSyncPending.size)psSyncFlush();});
+window.addEventListener('pagehide',()=>{clearTimeout(psSyncTimer);if(psSyncPending.size)psSyncFlush();});
 function getUser(){return window.PSICO_PREVIEW_MODE?{id:'preview',name:'Pré-visualização',email:'preview@local.invalid',logged:true}:psicoSession?.user?{id:psicoSession.user.id,name:psicoSession.user.user_metadata?.full_name||psicoSession.user.email?.split('@')[0]||'Estudante',email:psicoSession.user.email,logged:true}:null}
 function setAuthLocked(locked){document.body.classList.toggle('auth-locked',!!locked);if(locked)document.getElementById('side')?.classList.remove('open')}
 function requireAuth(){if(window.PSICO_PREVIEW_MODE)return true;if(!getUser()){authScreen('login');return false}setAuthLocked(false);return true}
