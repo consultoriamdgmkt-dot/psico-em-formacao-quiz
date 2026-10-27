@@ -382,7 +382,7 @@ Storage.prototype.setItem=function(k,v){
 function psSyncReloadOnce(){
  const uid=psicoSession?.user?.id;if(!uid)return;
  const key='psico_sync_hydrated_once_'+uid;
- if(sessionStorage.getItem(key)!=='yes'){sessionStorage.setItem(key,'yes');location.reload();}
+ if(sessionStorage.getItem(key)!=='yes')sessionStorage.setItem(key,'yes');
 }
 async function psSyncHydrate(){
  const user=psicoSession?.user,headers=psSyncHeaders();
@@ -452,11 +452,11 @@ function psicoMessage(s){const e=document.getElementById('authMsg');if(e)e.textC
 async function psicoAuthRequest(endpoint,data,token){if(window.PSICO_PREVIEW_MODE)throw Error('Autenticação desativada na pré-visualização.');const r=await fetch(`${SUPABASE_URL}/auth/v1/${endpoint}`,{method:'POST',headers:{'apikey':SUPABASE_KEY,'Content-Type':'application/json',...(token?{'Authorization':`Bearer ${token}`}:{})},body:JSON.stringify(data)});const x=await r.json().catch(()=>({}));if(!r.ok)throw Error(x.msg||x.error_description||x.message||'Não foi possível concluir.');return x}
 function psicoStoreSession(s){psicoSession=s?.access_token&&s?.user?s:null;if(psicoSession)localStorage.setItem(PSICO_SESSION,JSON.stringify(psicoSession));else localStorage.removeItem(PSICO_SESSION);localStorage.removeItem(AUTH_KEY);updateUserChip()}
 async function createLocalAccount(){const name=document.getElementById('authName').value.trim(),email=document.getElementById('authEmail').value.trim(),password=document.getElementById('authPass').value,p2=document.getElementById('authPass2').value; if(!name||!email||!password){psicoMessage('Preencha nome, e-mail e senha.');return}if(password.length<6){psicoMessage('Use pelo menos 6 caracteres na senha.');return}if(password!==p2){psicoMessage('As senhas não coincidem.');return}const btn=document.getElementById('authSubmit');btn.disabled=true;try{const x=await psicoAuthRequest('signup',{email,password,data:{full_name:name}});if(x.access_token){psicoStoreSession(x);await psSyncHydrate();setAuthLocked(false);studySetup();psSyncReloadOnce()}else psicoMessage('Cadastro recebido. Verifique seu e-mail para confirmar a conta e depois entre.')}catch(e){psicoMessage(e.message)}finally{btn.disabled=false}}
-async function loginLocal(){const email=document.getElementById('authEmail').value.trim(),password=document.getElementById('authPass').value;if(!email||!password){psicoMessage('Informe e-mail e senha.');return}const btn=document.getElementById('authSubmit');btn.disabled=true;try{const x=await psicoAuthRequest('token?grant_type=password',{email,password});psicoStoreSession(x);await psSyncHydrate();setAuthLocked(false);home();psSyncReloadOnce()}catch(e){psicoMessage('Não foi possível entrar. Verifique seus dados e a confirmação do e-mail.')}finally{btn.disabled=false}}
+async function loginLocal(){const email=document.getElementById('authEmail').value.trim(),password=document.getElementById('authPass').value;if(!email||!password){psicoMessage('Informe e-mail e senha.');return}const btn=document.getElementById('authSubmit');btn.disabled=true;try{const x=await psicoAuthRequest('token?grant_type=password',{email,password});psicoStoreSession(x);await psSyncHydrate();setAuthLocked(false);if(!await psicoRestoreReadingPosition())home();psSyncReloadOnce()}catch(e){psicoMessage('Não foi possível entrar. Verifique seus dados e a confirmação do e-mail.')}finally{btn.disabled=false}}
 async function resetPsicoPassword(){const email=document.getElementById('authEmail').value.trim();if(!email){psicoMessage('Informe seu e-mail.');return}try{await psicoAuthRequest('recover',{email});psicoMessage('Se o e-mail estiver cadastrado, você receberá instruções de recuperação.')}catch(e){psicoMessage('Não foi possível solicitar a recuperação.')}}
 async function logoutUser(){if(window.PSICO_PREVIEW_MODE){home();return}const token=psicoSession?.access_token;psicoStoreSession(null);setAuthLocked(true);authScreen('login');if(token)fetch(`${SUPABASE_URL}/auth/v1/logout`,{method:'POST',headers:{apikey:SUPABASE_KEY,Authorization:`Bearer ${token}`}}).catch(()=>{})}
 function updateUserChip(){const el=document.getElementById('userChip'),u=getUser();if(el)el.textContent=u?'● '+u.name:''}
-async function psicoRestoreSession(){if(window.PSICO_PREVIEW_MODE){setAuthLocked(false);home();return}try{const old=JSON.parse(localStorage.getItem(PSICO_SESSION)||'null');if(old?.refresh_token){const x=await psicoAuthRequest('token?grant_type=refresh_token',{refresh_token:old.refresh_token});psicoStoreSession(x)}}catch(e){psicoStoreSession(null)}if(getUser()){await psSyncHydrate();setAuthLocked(false);home();psSyncReloadOnce()}else authScreen('login')}
+async function psicoRestoreSession(){if(window.PSICO_PREVIEW_MODE){setAuthLocked(false);if(!await psicoRestoreReadingPosition())home();return}try{const old=JSON.parse(localStorage.getItem(PSICO_SESSION)||'null');if(old?.refresh_token){const x=await psicoAuthRequest('token?grant_type=refresh_token',{refresh_token:old.refresh_token});psicoStoreSession(x)}}catch(e){psicoStoreSession(null)}if(getUser()){await psSyncHydrate();setAuthLocked(false);home();psSyncReloadOnce()}else authScreen('login')}
 function getNotes(){try{return JSON.parse(localStorage.getItem(NOTES_KEY)||'[]')}catch(e){return []}}
 function saveNotes(a){localStorage.setItem(NOTES_KEY,JSON.stringify(a))}
 function noteFromStudy(title,concept,meta='Conteúdo de estudo'){
@@ -1375,7 +1375,9 @@ function v55PrintDocument(id,lessons,subtitle){if(!lessons.length){alert('Ainda 
 #psTaskBar{position:relative;z-index:2}
 #psMini{max-width:620px;margin:auto;bottom:56px!important}
 @media(max-width:600px){#psMini{bottom:50px!important;flex-wrap:wrap}#main{padding-bottom:185px!important}}
-</style></body></html>`;const blob=new Blob([html],{type:'text/html;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='resumo_'+id+'_'+(lessons.length===1?'aula':'completo')+'.html';a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);const w=window.open('','_blank');if(w){w.document.open();w.document.write(html);w.document.close();}else alert('O resumo HTML foi baixado. Abra o arquivo e escolha Imprimir → Salvar como PDF.');}
+</style>
+
+</body></html>`;const blob=new Blob([html],{type:'text/html;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='resumo_'+id+'_'+(lessons.length===1?'aula':'completo')+'.html';a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);const w=window.open('','_blank');if(w){w.document.open();w.document.write(html);w.document.close();}else alert('O resumo HTML foi baixado. Abra o arquivo e escolha Imprimir → Salvar como PDF.');}
 async function v55PrintProfessor(id){const btn=null;try{const ls=await v55LoadLessons(id);v55PrintDocument(id,ls,'Conceitos-chave de todas as aulas disponíveis')}catch(e){alert('Não foi possível preparar o resumo. Tente novamente.')}finally{if(btn)btn.disabled=false}}
 async function v55PrintLesson(id,lesson,isDb){try{let l;if(isDb){const aa=await sbGet(`aulas?select=numero,titulo&id=eq.${lesson}`);const tt=await sbGet(`topicos?select=titulo,conteudo,ordem&aula_id=eq.${lesson}&order=ordem.asc`);l={title:`Aula ${aa[0]?.numero||''} — ${aa[0]?.titulo||'Sem título'}`,sections:tt.map(t=>[t.titulo,t.conteudo])}}else{const a=(D2[id]||[])[lesson];l={title:a?.title||'Aula',sections:a?.sections||[]}}v55PrintDocument(id,[l],'Resumo individual por aula')}catch(e){alert('Não foi possível carregar os tópicos desta aula.')}}
 // Mantém as três opções da Checagem 1, com o mesmo layout de cartões.
@@ -1881,4 +1883,58 @@ window.addEventListener('psico-remote-state-ready',()=>{badge.textContent='Dados
 window.addEventListener('psico-sync-state',e=>{badge.textContent=e.detail.pending?'Sincronização pendente · verifique a conexão':'Alterações enviadas ao Supabase';});
 window.addEventListener('offline',()=>{badge.textContent='Sem internet · alterações pendentes';});
 })();
-</script></body>
+</script><script id="psico-reading-resume-v1">
+(function(){
+const KEY='psico_active_reading_position_v1';
+const owner=()=>typeof getUser==='function'?(getUser()?.id||'anonymous'):'anonymous';
+const save=(obj)=>{
+ try{sessionStorage.setItem(KEY,JSON.stringify({...obj,owner:owner(),savedAt:Date.now()}))}catch(e){}
+};
+const clear=()=>{try{sessionStorage.removeItem(KEY)}catch(e){}};
+const patch=(name,wrap)=>{
+ const old=window[name];if(typeof old!=='function')return;
+ window[name]=wrap(old);
+};
+patch('openLesson2',old=>function(aid,idx=0){
+ save({type:'lesson2',aid,idx:Number(idx)||0});
+ return old.apply(this,arguments);
+});
+patch('renderSecondJourney',old=>function(){
+ if(typeof S2STATE!=='undefined'&&S2STATE?.lesson){
+  save({type:'journey',id:S2STATE.id,step:S2STATE.step,source:S2STATE.source,lessonIndex:S2STATE.lessonIndex,aid:S2STATE.aulaId||null});
+ }
+ return old.apply(this,arguments);
+});
+patch('openSecondLessonDB',old=>async function(id,aid){
+ save({type:'dbjourney',id,aid,step:0});
+ return old.apply(this,arguments);
+});
+patch('home',old=>function(){clear();return old.apply(this,arguments)});
+patch('logoutUser',old=>function(){clear();return old.apply(this,arguments)});
+window.psicoRestoreReadingPosition=async function(){
+ let v;try{v=JSON.parse(sessionStorage.getItem(KEY)||'null')}catch(e){return false}
+ if(!v||v.owner!==owner()||Date.now()-v.savedAt>7*86400000)return false;
+ try{
+  if(v.type==='lesson2'&&v.aid){
+   if(typeof loadSegundoBimestre==='function')await loadSegundoBimestre();
+   if(typeof SB2!=='undefined'&&SB2.aulas.some(a=>a.id===v.aid)){
+    openLesson2(v.aid,v.idx||0);return true;
+   }
+  }
+  if(v.type==='journey'&&v.id&&v.source==='local'&&typeof openSecondLessonLocal==='function'){
+   openSecondLessonLocal(v.id,v.lessonIndex||0);
+   S2STATE.step=Math.min(Math.max(0,v.step||0),(S2STATE.lesson?.sections?.length||0)+2);
+   renderSecondJourney();return true;
+  }
+  if(v.type==='dbjourney'&&v.id&&v.aid&&typeof openSecondLessonDB==='function'){
+   await openSecondLessonDB(v.id,v.aid);
+   if(typeof S2STATE!=='undefined'&&S2STATE.lesson){S2STATE.step=Math.min(v.step||0,(S2STATE.lesson.sections||[]).length+2);renderSecondJourney();}
+   return true;
+  }
+ }catch(e){console.warn('Não foi possível retomar a aula',e)}
+ return false;
+};
+window.addEventListener('pageshow',()=>{ /* Navegação normal em segundo plano mantém a tela atual. */ });
+})();
+</script>
+</body>
