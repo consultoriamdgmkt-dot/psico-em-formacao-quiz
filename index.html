@@ -110,7 +110,19 @@ table{max-width:100%}
  .body img,.body svg,.body iframe{max-width:100%;height:auto}
  .step-jump{max-width:100%;overflow-x:auto}
 }
-</style></head><body>
+</style><style id="lesson-cesar-readable">
+.v49-block .v49-text{font-size:clamp(16px,4.1vw,19px);line-height:1.7;overflow-wrap:anywhere}
+.v49-block .v49-text p{margin:0 0 1.15em;line-height:1.7}
+.v49-block .v49-text .lesson-subhead{font-size:1.03em;font-weight:800;color:#34264e;margin:1.45em 0 .6em;line-height:1.4}
+.v49-block .v49-text .lesson-steps{list-style:decimal outside;padding-left:1.55em;margin:0 0 1.4em;display:block}
+.v49-block .v49-text .lesson-steps li{display:list-item;margin:0 0 .78em;padding-left:.2em;line-height:1.6}
+.v49-block .v49-text .idea-box{display:flex;gap:12px;align-items:flex-start;border:1px solid #d8c5ec;background:#f5effc;border-left:5px solid #8752b2;border-radius:12px;padding:16px;margin:24px 0 12px;color:#34264e}
+.v49-block .v49-text .idea-title{font-weight:800;margin-bottom:6px}
+.v49-block .v49-text .idea-text{line-height:1.6}
+.apg-paper p{white-space:pre-line;line-height:1.7}
+@media(max-width:600px){.v49-block .v49-text{font-size:17px}.v49-block .v49-text .lesson-steps{padding-left:1.3em}}
+</style>
+</head><body>
 <div class="mobile"><b role="button" tabindex="0" title="Voltar para Minha rotina" onclick="psDemoHome()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();psDemoHome()}" style="cursor:pointer">🧠 Psico em Formação</b><button onclick="document.getElementById('side').classList.toggle('open')">☰</button></div>
 <aside class="side" id="side"><div class="logo" role="button" tabindex="0" title="Voltar para Minha rotina" onclick="document.getElementById('side').classList.remove('open');psDemoHome()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();psDemoHome()}" style="cursor:pointer"><div class="brain">🧠</div><div class="brand">Psico em Formação<small>APRENDER • PRATICAR • EVOLUIR</small></div></div><div class="menu">
 <button class="active" onclick="home()">⌂ Início</button>
@@ -1242,24 +1254,28 @@ function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&l
 function nl(v){return esc(v).replace(/\n/g,'<br>');}
 function formatTopicContent(v){
   const raw=String(v??'').replace(/\r\n?/g,'\n').trim();
-  if(!raw) return '';
-  const idea=/🧠\s*(?:Guarde esta ideia\s*:?)?/i;
-  const m=raw.match(idea);
-  let main=m?raw.slice(0,m.index).trim():raw;
-  let ideaText=m?raw.slice(m.index+m[0].length).trim():'';
-
-  const renderMain=(txt)=>{
-    const blocks=txt.split(/\n\s*\n+/).map(x=>x.trim()).filter(Boolean);
-    return blocks.map(b=>'<p>'+esc(b).replace(/\n/g,'<br>')+'</p>').join('');
-  };
-
-  let out=renderMain(main);
-  if(ideaText){
-    out+=`<div class="idea-box"><div class="idea-icon">🧠</div><div><div class="idea-title">Guarde esta ideia:</div><div class="idea-text">${esc(ideaText).replace(/\n/g,'<br>')}</div></div></div>`;
+  if(!raw)return '';
+  const marker=raw.match(/(?:🧠\s*)?Guarde esta ideia\s*:/i);
+  const main=marker?raw.slice(0,marker.index).trim():raw;
+  const idea=marker?raw.slice(marker.index+marker[0].length).trim():'';
+  const paragraphs=main.split(/\n\s*\n/).map(x=>x.trim()).filter(Boolean);
+  let out='',list=[];
+  const flush=()=>{if(list.length){out+='<ol class="lesson-steps">'+list.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ol>';list=[]}};
+  for(const paragraph of paragraphs){
+    const lines=paragraph.split('\n').map(x=>x.trim()).filter(Boolean);
+    for(const line of lines){
+      const num=line.match(/^\d+[.)]\s+(.+)$/);
+      if(num){list.push(num[1]);continue}
+      flush();
+      if(/^(?:PONTOS-CHAVE|FECHAMENTO REFLEXIVO|Distinções importantes|Possíveis ações|Análise passo a passo|Medidas organizacionais pertinentes|O levantamento pode envolver|Fatores que podem ser considerados|Duas dimensões precisam caminhar juntas|Cuidados destacados na apresentação|Entre os elementos a verificar estão|Exemplo discutido em sala)/i.test(line)){
+        out+='<h3 class="lesson-subhead">'+esc(line)+'</h3>';
+      }else out+='<p>'+esc(line)+'</p>';
+    }
+    flush();
   }
+  if(idea)out+='<div class="idea-box"><div class="idea-icon">🧠</div><div><div class="idea-title">Guarde esta ideia</div><div class="idea-text">'+esc(idea)+'</div></div></div>';
   return out;
 }
-
 async function openBimester2Dynamic(){
   M.innerHTML='<div class="page-head"><h1>2º Bimestre</h1><p>Carregando aulas atualizadas...</p></div>';
   try{
