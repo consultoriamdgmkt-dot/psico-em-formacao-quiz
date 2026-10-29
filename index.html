@@ -657,7 +657,21 @@ function psicoJuliana3Body(body,title){
  const raw=String(body||'');
  if(/(?:🧠\\s*)?Guarde esta ideia\\s*:/i.test(raw))return psicoLessonBody(raw);
  const summaries={"Comunicação síncrona e assíncrona":"Síncrona é a comunicação em tempo real; assíncrona permite responder depois. A urgência orienta a escolha.","Disciplina, autogestão e organização do trabalho":"Autogestão envolve planejar prioridades e comunicar dificuldades, sem dispensar o suporte da organização.","Disponibilidade, notificações e desconexão":"Flexibilidade não é plantão permanente: horários de contato e descanso precisam de limites claros.","Vantagens e desvantagens dos modelos de trabalho":"O benefício do trabalho remoto depende das condições concretas, e não apenas de evitar deslocamentos.","Segurança digital e proteção de informações":"Segurança digital combina cuidados individuais, treinamento e procedimentos definidos pela organização.","Marco legal: pontos específicos da Lei nº 14.442/2022":"As regras do teletrabalho exigem atenção ao contrato, à jornada e às responsabilidades aplicáveis."};
- const takeaway=summaries[String(title||'').trim()];
+ const heading=String(title||'').trim();
+ let takeaway=summaries[heading];
+ // Os títulos podem conter numeração ou pequenas variações no banco.
+ if(!takeaway){
+  const normalized=heading.replace(/^\\d+[.)]\\s*/,'').toLowerCase();
+  const matched=Object.keys(summaries).find(k=>normalized.includes(k.toLowerCase())||k.toLowerCase().includes(normalized));
+  if(matched)takeaway=summaries[matched];
+ }
+ // Sínteses próprias para exemplos aplicados: nunca copiar o parágrafo final.
+ if(!takeaway&&/três entregas prioritárias|reserva períodos de concentração/i.test(raw))
+  takeaway='Autogestão eficaz depende de prioridades realistas, acordos de comunicação e suporte da liderança; não equivale a disponibilidade constante.';
+ if(!takeaway&&/duas horas diárias de deslocamento|casa barulhenta/i.test(raw))
+  takeaway='Nenhuma modalidade de trabalho é automaticamente mais saudável: infraestrutura, deslocamento, apoio e condições reais determinam seus efeitos.';
+ if(!takeaway&&/imita a identidade de um gestor|solicita credenciais/i.test(raw))
+  takeaway='Pedidos de acesso ou credenciais exigem verificação por canais confiáveis; prevenção de fraudes também é responsabilidade organizacional.';
  if(!takeaway)return formatBody(raw);
  const escaped=takeaway.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  return formatBody(raw)+'<aside class="v69-idea psico-idea"><span class="v69-idea-icon">🧠</span><div><strong>Guarde esta ideia</strong><p>'+escaped+'</p></div></aside>';
