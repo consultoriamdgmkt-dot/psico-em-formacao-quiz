@@ -1937,7 +1937,7 @@ window.psLoadDateLessons=async function(){
   const rows=await sbGet(`aulas?select=id,numero,titulo&bimestre_id=eq.${BIM2_ID}&professor_id=eq.${PROF_IDS[p]}&publicada=eq.true&order=ordem.asc,numero.asc`);
   data=rows.map(x=>({
    id:x.id,
-   label:/^\\s*Aula\\s+\\d+(?:\\.\\d+)?\\s*[—–-]/i.test(x.titulo||'')?x.titulo:`Aula ${x.numero} — ${x.titulo}`,
+   label:/^\s*Aula\s+\d+(?:\.\d+)?\s*[—–-]/i.test(x.titulo||'')?x.titulo:`Aula ${x.numero} — ${x.titulo}`,
    source:'db'
   }));
  }catch(e){
