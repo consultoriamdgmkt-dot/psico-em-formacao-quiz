@@ -1926,10 +1926,31 @@ if(typeof originalHome==='function')window.home=function(){originalHome.apply(th
  card.innerHTML='<h2>Minha rotina semanal</h2>'+weekHtml();
  }};
 window.psDemoPlanner=async function(){let main=document.getElementById('main');if(!main)return;main.innerHTML=`<section class="hero"><h1>Montar minha rotina semanal</h1><p>Agende por data, escolha o professor e a aula e marque várias atividades no mesmo dia.</p></section><section class="psWeekCard">${weekHtml()}</section><section class="psWeekCard"><h2>Adicionar bloco de estudos</h2><div class="psWeekForm"><label>Data<input type="date" id="psNewDate" value="${selected}"></label><label>Professor<select id="psNewProf" onchange="psLoadDateLessons()">${Object.keys(names).map(k=>`<option value="${k}">${names[k]}</option>`).join('')}</select></label><label>Aula<select id="psNewLesson"><option value="">Carregando aulas...</option></select></label><label>Tempo total (minutos)<input id="psNewMin" type="number" min="5" max="240" value="60"></label></div><p>Atividades (marque uma ou mais):</p>${acts.map((a,i)=>`<label class="psMulti"><input type="checkbox" class="psNewAct" value="${a}" ${i===0?'checked':''}>${a}</label>`).join('')}<p id="psDateMsg" role="status"></p><button class="primary" type="button" onclick="psSaveDateBlock()">+ Salvar bloco e adicionar outro</button> <button class="mini-btn" type="button" onclick="psDemoHome()">Concluir planejamento</button></section><section class="psWeekCard"><h2>Atividades agendadas</h2><div id="psDateList">${tasksHtml(selected)}</div></section>`;await window.psLoadDateLessons();};
-window.psLoadDateLessons=async function(){let p=document.getElementById('psNewProf')?.value,select=document.getElementById('psNewLesson');if(!p||!select)return;let data=[];
- try{if(typeof localSecondLessons==='function')data=localSecondLessons(p).map((x,i)=>({id:String(i),label:x.title,source:'local'}));}catch(e){}
- if(!data.length){try{if(typeof sbGet==='function'&&typeof PROF_IDS!=='undefined'&&typeof BIM2_ID!=='undefined'){let rows=await sbGet(`aulas?select=id,numero,titulo&bimestre_id=eq.${BIM2_ID}&professor_id=eq.${PROF_IDS[p]}&publicada=eq.true&order=ordem.asc`);data=rows.map(x=>({id:x.id,label:`Aula ${x.numero} — ${x.titulo}`,source:'db'}));}}catch(e){}}
- if(document.getElementById('psNewProf')?.value!==p)return;select.innerHTML=data.length?data.map(x=>`<option value="${esc(x.id)}" data-source="${esc(x.source)}">${esc(x.label)}</option>`).join(''):'<option value="">Nenhuma aula disponível</option>';
+window.psLoadDateLessons=async function(){
+ const p=document.getElementById('psNewProf')?.value,select=document.getElementById('psNewLesson');
+ if(!p||!select)return;
+ select.innerHTML='<option value="">Consultando aulas publicadas...</option>';
+ let data=[],failed=false;
+ // A lista local é apenas reserva: priorize o catálogo publicado do 2º bimestre no Supabase.
+ try{
+  if(typeof sbGet!=='function'||typeof PROF_IDS==='undefined'||typeof BIM2_ID==='undefined'||!PROF_IDS[p])throw new Error('Catálogo indisponível');
+  const rows=await sbGet(`aulas?select=id,numero,titulo&bimestre_id=eq.${BIM2_ID}&professor_id=eq.${PROF_IDS[p]}&publicada=eq.true&order=ordem.asc,numero.asc`);
+  data=rows.map(x=>({
+   id:x.id,
+   label:/^\\s*Aula\\s+\\d+(?:\\.\\d+)?\\s*[—–-]/i.test(x.titulo||'')?x.titulo:`Aula ${x.numero} — ${x.titulo}`,
+   source:'db'
+  }));
+ }catch(e){
+  failed=true;
+  console.warn('Cronograma: não foi possível consultar as aulas publicadas',e);
+  try{if(typeof localSecondLessons==='function')data=localSecondLessons(p).map((x,i)=>({id:String(i),label:x.title,source:'local'}));}catch(_){}
+ }
+ // Evita que uma consulta antiga substitua a seleção quando o professor muda rapidamente.
+ if(document.getElementById('psNewProf')?.value!==p||document.getElementById('psNewLesson')!==select)return;
+ select.innerHTML=data.length?data.map(x=>`<option value="${esc(x.id)}" data-source="${esc(x.source)}">${esc(x.label)}</option>`).join(''):'<option value="">Nenhuma aula publicada disponível</option>';
+ const msg=document.getElementById('psDateMsg');
+ if(msg&&failed)msg.textContent='Não foi possível consultar o catálogo atualizado. Exibindo aulas da cópia local; tente novamente para visualizar todas.';
+ else if(msg&&!msg.textContent.includes('atividade(s) adicionada(s)'))msg.textContent='';
 };
 window.psSaveDateBlock=function(){let date=document.getElementById('psNewDate')?.value,prof=document.getElementById('psNewProf')?.value,lesson=document.getElementById('psNewLesson'),min=Number(document.getElementById('psNewMin')?.value),selectedActs=[...document.querySelectorAll('.psNewAct:checked')].map(x=>x.value),msg=document.getElementById('psDateMsg');
  if(!date||!prof||!lesson?.value||!selectedActs.length||!Number.isFinite(min)||min<5){if(msg)msg.textContent='Informe data, aula, tempo válido e ao menos uma atividade.';return}
